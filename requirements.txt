@@ -1,0 +1,23 @@
+# Core numeric/data
+numpy==1.26.4
+pandas==2.3.3
+scipy==1.13.1
+tqdm==4.67.3
+
+# Config / IO / utils
+PyYAML==6.0.3
+requests==2.33.1
+retrying==1.4.2
+
+# NLP helpers used by recommenders data pipeline
+nltk==3.9.4
+scikit-learn==1.8.0
+
+# Deep learning runtime for NewsRec models
+tensorflow==2.15.0
+tensorflow-estimator==2.15.0
+tensorboard==2.15.2
+h5py==3.16.0
+
+# Notebook execution
+jupyterlab==4.5.6

@@ -1,0 +1,32 @@
+data:
+  model_type: dkn
+  data_format: dkn
+  doc_size: 10
+  history_size: 50
+  word_size: 12600
+  entity_size: 3987
+  npratio: 4
+  
+model:
+  attention_activation: relu
+  attention_hidden_dim: 100
+  dim: 100
+  entity_dim: 100
+  transform: True
+  filter_sizes: [1, 2, 3]
+  num_filters: 100
+  layer_sizes: [300]
+  activation: ['sigmoid']
+  dropout: [0.0]
+  use_entity: True
+  use_context: True
+
+train:
+  learning_rate: 0.0005
+  loss: log_loss
+  optimizer: adam
+  epochs: 10
+  batch_size: 500
+  show_step: 10000
+  metrics: ['auc']
+  pair_metrics: ['group_auc', 'mean_mrr', 'ndcg@5;10']

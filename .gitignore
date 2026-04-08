@@ -1,0 +1,70 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build and packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+*.key
+*.crt
+
+# Logs
+*.log
+logs/
+
+# ML artifacts / checkpoints
+checkpoints/
+checkpoint
+*.ckpt
+*.h5
+*.hdf5
+*.pt
+*.pth
+*.onnx
+*.tflite
+*.pb
+
+# Large data artifacts (keep folder structure with .gitkeep if needed)
+data/**
+!data/.gitkeep
+
+# Common model output folders
+outputs/
+runs/
+wandb/
+mlruns/
+tensorboard/
+
+# Generated utils artifacts
+utils/*.pkl
+utils/*.npy
