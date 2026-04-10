@@ -12,6 +12,7 @@ retrying==1.4.2
 # NLP helpers used by recommenders data pipeline
 nltk==3.9.4
 scikit-learn==1.8.0
+lightgbm==4.6.0
 
 # Deep learning runtime for NewsRec models
 tensorflow==2.15.0
