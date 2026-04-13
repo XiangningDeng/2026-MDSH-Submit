@@ -1,0 +1,24 @@
+{
+  "method_name": "lr_ctr",
+  "seed": 42,
+  "feature_columns": [
+    "history_len",
+    "history_unique_len",
+    "same_category_count",
+    "same_subcategory_count",
+    "same_category_ratio",
+    "same_subcategory_ratio",
+    "hour",
+    "weekday",
+    "is_weekend",
+    "title_word_count",
+    "abstract_word_count",
+    "title_char_count",
+    "abstract_char_count",
+    "category",
+    "subcategory"
+  ],
+  "train_rows": 5843444,
+  "valid_rows": 2740998,
+  "prediction_path": "/Users/apple/Desktop/Microsoft/2026-MDSH-Submit/outputs/lr_ctr/prediction.txt"
+}
