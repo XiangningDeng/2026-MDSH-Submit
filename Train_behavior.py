@@ -5,15 +5,15 @@ from collections import Counter
 from sklearn.metrics import roc_auc_score
 import os
 
-# ===== 1. 路径 =====
+
 train_path = r"C:\Users\zheng\OneDrive\桌面\Capstone\behaviors.tsv"
 val_path = r"C:\Users\zheng\OneDrive\桌面\Capstone\val behaviors.tsv"
 
-# ===== 2. 检查文件是否存在 =====
+
 print("Train exists:", os.path.exists(train_path))
 print("Val exists:", os.path.exists(val_path))
 
-# ===== 3. 读取数据 =====
+
 train_df = pd.read_csv(
     train_path,
     sep="\t",
