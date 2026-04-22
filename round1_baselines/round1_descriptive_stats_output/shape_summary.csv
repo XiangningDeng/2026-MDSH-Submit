@@ -1,0 +1,6 @@
+table,rows,cols
+news_train,51282,8
+news_valid,42416,8
+news_combined_unique,65238,8
+behaviors_train,156965,5
+behaviors_valid,73152,5

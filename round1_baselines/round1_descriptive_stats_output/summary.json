@@ -1,0 +1,9 @@
+{
+  "seed": 42,
+  "train_candidates": 5843444,
+  "valid_candidates": 2740998,
+  "train_ctr": 0.040446010948338,
+  "valid_ctr": 0.040635928957263014,
+  "news_combined_unique": 65238,
+  "valid_impressions": 73152
+}
