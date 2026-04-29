@@ -1,0 +1,12 @@
+{
+  "total_articles": 42416,
+  "total_impressions": 73152,
+  "unique_users": 50000,
+  "cold_start_pct": 3.03,
+  "overall_ctr_pct": 4.06,
+  "avg_candidates_per_imp": 37.47,
+  "avg_history_len": 32.3,
+  "articles_never_clicked": 3157,
+  "top_category": "news",
+  "date_range": "2019-11-15 to 2019-11-15"
+}
