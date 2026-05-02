@@ -7,11 +7,11 @@
 - 每个人的命令都带 `--dry-run`，只会生成 cache/report，不会修改 `data/test/news.tsv`。
 - 中途断了不用重来，重新运行同一条命令即可，脚本会读取已有 cache 并跳过已经处理过的标题。
 - 不要删除自己的 `data/url_cache_part*.jsonl` 文件。
-- `--sleep 3` 表示每次搜索之间暂停 3 秒，用来降低被搜索引擎限流的风险，最开始可以用1s节约时间。
+- `--sleep 1` 表示每次搜索之间暂停 1 秒，也可以增加到3s用来降低被搜索引擎限流的风险。
 
 ## 分工命令
 
-### 第 1 个人
+### Xiangning Deng
 
 ```bash
 python tools/repair_news_urls.py \
@@ -21,10 +21,10 @@ python tools/repair_news_urls.py \
   --cache data/url_cache_part1.jsonl \
   --report data/url_report_part1.csv \
   --dry-run \
-  --sleep 3
+  --sleep 1
 ```
 
-### 第 2 个人
+### Ce Guo
 
 ```bash
 python tools/repair_news_urls.py \
@@ -34,10 +34,10 @@ python tools/repair_news_urls.py \
   --cache data/url_cache_part2.jsonl \
   --report data/url_report_part2.csv \
   --dry-run \
-  --sleep 3
+  --sleep 1
 ```
 
-### 第 3 个人
+### Ningke Zhang
 
 ```bash
 python tools/repair_news_urls.py \
@@ -47,10 +47,10 @@ python tools/repair_news_urls.py \
   --cache data/url_cache_part3.jsonl \
   --report data/url_report_part3.csv \
   --dry-run \
-  --sleep 3
+  --sleep 1
 ```
 
-### 第 4 个人
+### Zhengda Wang
 
 ```bash
 python tools/repair_news_urls.py \
@@ -60,10 +60,10 @@ python tools/repair_news_urls.py \
   --cache data/url_cache_part4.jsonl \
   --report data/url_report_part4.csv \
   --dry-run \
-  --sleep 3
+  --sleep 1
 ```
 
-### 第 5 个人
+### Wenqiang Ge
 
 ```bash
 python tools/repair_news_urls.py \
@@ -73,7 +73,7 @@ python tools/repair_news_urls.py \
   --cache data/url_cache_part5.jsonl \
   --report data/url_report_part5.csv \
   --dry-run \
-  --sleep 3
+  --sleep 1
 ```
 
 ## 合并 cache
