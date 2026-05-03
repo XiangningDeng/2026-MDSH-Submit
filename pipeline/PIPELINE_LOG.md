@@ -83,8 +83,8 @@ max: 295
 
 | Run | Description | AUC | MRR | nDCG@5 | nDCG@10 |
 |---|---|---:|---:|---:|---:|
-| Original LightGBM baseline | LightGBM baseline | 0.6408 | 0.3539 | 0.3366 | 0.3962 |
-| LightGBM-only via pipeline | Sanity check / ablation: `--no-tfidf-score --tune-lgbm` | 0.6462 | 0.3482 | 0.3323 | 0.3925 |
+| Original LightGBM baseline | LightGBM baseline | 0.6408 | **0.3539** | **0.3366** | **0.3962** |
+| LightGBM-only via pipeline | Sanity check / ablation: `--no-tfidf-score --tune-lgbm` | **0.6462** | 0.3482 | 0.3323 | 0.3925 |
 | TF-IDF score + LightGBM | No cutoff, tuned LightGBM | 0.6218 | 0.3455 | 0.3253 | 0.3849 |
 | TF-IDF recall top20 + LightGBM | Online-style cutoff, no tuning | 0.5752 | 0.3229 | 0.3000 | 0.3580 |
 | TF-IDF recall top50 + LightGBM | Online-style cutoff, no tuning | 0.5907 | 0.3368 | 0.3173 | 0.3741 |
