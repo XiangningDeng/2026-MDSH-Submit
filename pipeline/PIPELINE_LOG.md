@@ -98,7 +98,7 @@ recalled_by_entity_embedding
 |---|---:|---:|---:|---:|
 | LightGBM-only 50k | 0.5476 | 0.2946 | 0.2712 | 0.3357 |
 | Popularity + LightGBM 50k | 0.5299 | 0.2887 | 0.2638 | 0.3283 |
-| Category + LightGBM 50k | 0.5595 | 0.2956 | 0.2717 | 0.3365 |
+| Category + LightGBM 50k | **0.5595** | **0.2956** | **0.2717** | **0.3365** |
 | ItemCF + LightGBM 50k | 0.5150 | 0.2613 | 0.2375 | 0.2994 |
 | EntityEmbedding + LightGBM 50k | 0.5512 | 0.2872 | 0.2639 | 0.3288 |
 
