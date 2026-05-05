@@ -109,6 +109,10 @@ def assemble_features(
     category_counts: pd.DataFrame,
     subcategory_counts: pd.DataFrame,
     tfidf_scores: pd.DataFrame | None = None,
+    popularity_scores: pd.DataFrame | None = None,
+    category_scores: pd.DataFrame | None = None,
+    itemcf_scores: pd.DataFrame | None = None,
+    entity_embedding_scores: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     df = candidates.merge(
         impression_features.drop(columns=["history"]),
@@ -124,6 +128,80 @@ def assemble_features(
         df = df.merge(tfidf_scores[score_cols], on=["impression_id", "candidate_news_id"], how="left")
     else:
         df["tfidf_score"] = 0.0
+    if popularity_scores is not None:
+        score_cols = [
+            "impression_id",
+            "candidate_news_id",
+            "global_popularity_score",
+            "recent_popularity_score",
+            "category_popularity_score",
+            "popularity_score",
+            "recalled_by_popularity",
+        ]
+        df = df.merge(
+            popularity_scores[score_cols],
+            on=["impression_id", "candidate_news_id"],
+            how="left",
+        )
+    else:
+        df["global_popularity_score"] = 0.0
+        df["recent_popularity_score"] = 0.0
+        df["category_popularity_score"] = 0.0
+        df["popularity_score"] = 0.0
+        df["recalled_by_popularity"] = 0
+    if category_scores is not None:
+        score_cols = [
+            "impression_id",
+            "candidate_news_id",
+            "category_recall_score",
+            "subcategory_recall_score",
+            "category_recall_combined_score",
+            "recalled_by_category",
+        ]
+        df = df.merge(
+            category_scores[score_cols],
+            on=["impression_id", "candidate_news_id"],
+            how="left",
+        )
+    else:
+        df["category_recall_score"] = 0.0
+        df["subcategory_recall_score"] = 0.0
+        df["category_recall_combined_score"] = 0.0
+        df["recalled_by_category"] = 0
+    if itemcf_scores is not None:
+        score_cols = [
+            "impression_id",
+            "candidate_news_id",
+            "itemcf_score",
+            "itemcf_rank",
+            "recalled_by_itemcf",
+        ]
+        df = df.merge(
+            itemcf_scores[score_cols],
+            on=["impression_id", "candidate_news_id"],
+            how="left",
+        )
+    else:
+        df["itemcf_score"] = 0.0
+        df["itemcf_rank"] = 0
+        df["recalled_by_itemcf"] = 0
+    if entity_embedding_scores is not None:
+        score_cols = [
+            "impression_id",
+            "candidate_news_id",
+            "entity_embedding_score",
+            "entity_embedding_rank",
+            "recalled_by_entity_embedding",
+        ]
+        df = df.merge(
+            entity_embedding_scores[score_cols],
+            on=["impression_id", "candidate_news_id"],
+            how="left",
+        )
+    else:
+        df["entity_embedding_score"] = 0.0
+        df["entity_embedding_rank"] = 0
+        df["recalled_by_entity_embedding"] = 0
 
     fill_map = {
         "category": "unknown",
@@ -138,6 +216,21 @@ def assemble_features(
         "history_category_count": 0,
         "history_subcategory_count": 0,
         "tfidf_score": 0.0,
+        "global_popularity_score": 0.0,
+        "recent_popularity_score": 0.0,
+        "category_popularity_score": 0.0,
+        "popularity_score": 0.0,
+        "recalled_by_popularity": 0,
+        "category_recall_score": 0.0,
+        "subcategory_recall_score": 0.0,
+        "category_recall_combined_score": 0.0,
+        "recalled_by_category": 0,
+        "itemcf_score": 0.0,
+        "itemcf_rank": 0,
+        "recalled_by_itemcf": 0,
+        "entity_embedding_score": 0.0,
+        "entity_embedding_rank": 0,
+        "recalled_by_entity_embedding": 0,
     }
     df = df.fillna(fill_map)
     history_len_safe = df["history_len"].replace(0, 1)
@@ -162,7 +255,15 @@ class RankingFeatureBuilder:
         self.popularity_features = build_popularity_features(prepare_candidates(train_candidates))
         return self
 
-    def transform(self, candidates: pd.DataFrame, tfidf_scores: pd.DataFrame | None = None) -> pd.DataFrame:
+    def transform(
+        self,
+        candidates: pd.DataFrame,
+        tfidf_scores: pd.DataFrame | None = None,
+        popularity_scores: pd.DataFrame | None = None,
+        category_scores: pd.DataFrame | None = None,
+        itemcf_scores: pd.DataFrame | None = None,
+        entity_embedding_scores: pd.DataFrame | None = None,
+    ) -> pd.DataFrame:
         if self.news_features is None or self.popularity_features is None:
             raise RuntimeError("Feature builder must be fit before transform.")
         prepared = prepare_candidates(candidates)
@@ -178,8 +279,11 @@ class RankingFeatureBuilder:
             category_counts,
             subcategory_counts,
             tfidf_scores,
+            popularity_scores,
+            category_scores,
+            itemcf_scores,
+            entity_embedding_scores,
         )
         for col in self.categorical_columns:
             features[col] = features[col].astype("category")
         return features
-

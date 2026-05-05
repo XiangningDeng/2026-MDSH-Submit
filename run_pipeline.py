@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run TF-IDF recall + LightGBM ranking pipeline.")
+    parser = argparse.ArgumentParser(description="Run recall features + LightGBM ranking pipeline.")
     parser.add_argument("--mode", choices=["eval", "inference"], default="eval")
     parser.add_argument("--project-root", default=".", help="Repository root containing data/train and data/valid.")
     parser.add_argument("--output-dir", default="outputs/pipeline")
@@ -19,9 +19,29 @@ def main() -> None:
         help="Optional TF-IDF recall cutoff per impression before LightGBM reranking.",
     )
     parser.add_argument(
-        "--no-tfidf-score",
+        "--use-tfidf-score",
         action="store_true",
-        help="Exclude tfidf_score from LightGBM features for ablation.",
+        help="Include tfidf_score in LightGBM features for ablation.",
+    )
+    parser.add_argument(
+        "--use-popularity-score",
+        action="store_true",
+        help="Include popularity recall scores in LightGBM features for ablation.",
+    )
+    parser.add_argument(
+        "--use-category-score",
+        action="store_true",
+        help="Include category recall scores in LightGBM features for ablation.",
+    )
+    parser.add_argument(
+        "--use-itemcf-score",
+        action="store_true",
+        help="Include ItemCF recall scores in LightGBM features for ablation.",
+    )
+    parser.add_argument(
+        "--use-entity-embedding-score",
+        action="store_true",
+        help="Include entity embedding recall scores in LightGBM features for ablation.",
     )
     parser.add_argument(
         "--max-train-impressions",
@@ -51,7 +71,11 @@ def main() -> None:
         cache_dir=Path(args.cache_dir),
         top_k=args.top_k,
         recall_top_k=args.recall_top_k,
-        use_tfidf_score=not args.no_tfidf_score,
+        use_tfidf_score=args.use_tfidf_score,
+        use_popularity_score=args.use_popularity_score,
+        use_category_score=args.use_category_score,
+        use_itemcf_score=args.use_itemcf_score,
+        use_entity_embedding_score=args.use_entity_embedding_score,
     )
     result = RecommendationPipeline(config).run(
         mode=args.mode,

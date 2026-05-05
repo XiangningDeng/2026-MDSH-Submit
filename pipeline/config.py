@@ -57,6 +57,21 @@ LGBM_SEARCH_SPACE = {
 
 FEATURE_COLUMNS = [
     "tfidf_score",
+    "global_popularity_score",
+    "recent_popularity_score",
+    "category_popularity_score",
+    "popularity_score",
+    "recalled_by_popularity",
+    "category_recall_score",
+    "subcategory_recall_score",
+    "category_recall_combined_score",
+    "recalled_by_category",
+    "itemcf_score",
+    "itemcf_rank",
+    "recalled_by_itemcf",
+    "entity_embedding_score",
+    "entity_embedding_rank",
+    "recalled_by_entity_embedding",
     "history_len",
     "history_unique_len",
     "hour",
@@ -87,7 +102,11 @@ class PipelineConfig:
     cache_dir: Path = field(default_factory=lambda: Path("outputs/pipeline_cache"))
     top_k: int = 10
     recall_top_k: int | None = None
-    use_tfidf_score: bool = True
+    use_tfidf_score: bool = False
+    use_popularity_score: bool = False
+    use_category_score: bool = False
+    use_itemcf_score: bool = False
+    use_entity_embedding_score: bool = False
     seed: int = SEED
     tfidf_params: dict = field(default_factory=lambda: dict(TFIDF_PARAMS))
     lgbm_params: dict = field(default_factory=lambda: dict(LIGHTGBM_BEST_PARAMS))
@@ -123,8 +142,55 @@ class PipelineConfig:
     def model_path(self) -> Path:
         return self.output_dir / "lightgbm_model.txt"
 
+    @property
+    def train_entity_embedding_path(self) -> Path:
+        return self.project_root / "data/train/entity_embedding.vec"
+
+    @property
+    def valid_entity_embedding_path(self) -> Path:
+        return self.project_root / "data/valid/entity_embedding.vec"
+
     def __post_init__(self) -> None:
         if not self.use_tfidf_score:
             self.feature_columns = [
                 col for col in self.feature_columns if col != "tfidf_score"
+            ]
+        if not self.use_popularity_score:
+            popularity_cols = {
+                "global_popularity_score",
+                "recent_popularity_score",
+                "category_popularity_score",
+                "popularity_score",
+                "recalled_by_popularity",
+            }
+            self.feature_columns = [
+                col for col in self.feature_columns if col not in popularity_cols
+            ]
+        if not self.use_category_score:
+            category_recall_cols = {
+                "category_recall_score",
+                "subcategory_recall_score",
+                "category_recall_combined_score",
+                "recalled_by_category",
+            }
+            self.feature_columns = [
+                col for col in self.feature_columns if col not in category_recall_cols
+            ]
+        if not self.use_itemcf_score:
+            itemcf_cols = {
+                "itemcf_score",
+                "itemcf_rank",
+                "recalled_by_itemcf",
+            }
+            self.feature_columns = [
+                col for col in self.feature_columns if col not in itemcf_cols
+            ]
+        if not self.use_entity_embedding_score:
+            entity_embedding_cols = {
+                "entity_embedding_score",
+                "entity_embedding_rank",
+                "recalled_by_entity_embedding",
+            }
+            self.feature_columns = [
+                col for col in self.feature_columns if col not in entity_embedding_cols
             ]

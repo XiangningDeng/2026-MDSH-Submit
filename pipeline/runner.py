@@ -11,6 +11,10 @@ from pipeline.data_prepare import load_train_valid_data
 from pipeline.feature_builder import RankingFeatureBuilder
 from pipeline.metrics import evaluate_predictions, write_metrics
 from pipeline.rank_lgbm import LightGBMRanker, coordinate_search
+from pipeline.recall_category import CategoryRecallScorer
+from pipeline.recall_entity_embedding import EntityEmbeddingRecallScorer
+from pipeline.recall_itemcf import ItemCFRecallScorer
+from pipeline.recall_popularity import PopularityRecallScorer
 from pipeline.recall_tfidf import TfidfRecallScorer
 
 
@@ -133,6 +137,7 @@ class RecommendationPipeline:
         train_candidates, valid_candidates, news = load_train_valid_data(self.config)
         train_candidates = self._sample_impressions(train_candidates, max_train_impressions)
         valid_candidates = self._sample_impressions(valid_candidates, max_valid_impressions)
+        train_candidates_for_recall_fit = train_candidates.copy()
         section_started_at = mark("data_prepare", section_started_at)
 
         needs_tfidf = self.config.use_tfidf_score or (
@@ -192,12 +197,81 @@ class RecommendationPipeline:
                 "impressions_fully_kept": int(valid_candidates["impression_id"].nunique()),
             }
 
+        if self.config.use_popularity_score:
+            popularity = PopularityRecallScorer().fit(train_candidates_for_recall_fit, news)
+            train_popularity_scores = popularity.score_candidates(train_candidates)
+            valid_popularity_scores = popularity.score_candidates(valid_candidates)
+            valid_popularity_scores.to_csv(
+                self.config.output_dir / "popularity_recall_scores.csv",
+                index=False,
+            )
+        else:
+            train_popularity_scores = None
+            valid_popularity_scores = None
+
+        if self.config.use_category_score:
+            category = CategoryRecallScorer().fit(news)
+            train_category_scores = category.score_candidates(train_candidates)
+            valid_category_scores = category.score_candidates(valid_candidates)
+            valid_category_scores.to_csv(
+                self.config.output_dir / "category_recall_scores.csv",
+                index=False,
+            )
+        else:
+            train_category_scores = None
+            valid_category_scores = None
+        section_started_at = mark("popularity_category_recall", section_started_at)
+
+        if self.config.use_itemcf_score:
+            itemcf = ItemCFRecallScorer().fit(train_candidates_for_recall_fit)
+            train_itemcf_scores = itemcf.score_candidates(train_candidates)
+            valid_itemcf_scores = itemcf.score_candidates(valid_candidates)
+            valid_itemcf_scores.to_csv(
+                self.config.output_dir / "itemcf_recall_scores.csv",
+                index=False,
+            )
+        else:
+            train_itemcf_scores = None
+            valid_itemcf_scores = None
+        section_started_at = mark("itemcf_recall", section_started_at)
+
+        if self.config.use_entity_embedding_score:
+            entity_embedding_paths = [
+                self.config.train_entity_embedding_path,
+                self.config.valid_entity_embedding_path,
+            ]
+            entity_embedding = EntityEmbeddingRecallScorer(entity_embedding_paths).fit(news)
+            train_entity_embedding_scores = entity_embedding.score_candidates(train_candidates)
+            valid_entity_embedding_scores = entity_embedding.score_candidates(valid_candidates)
+            valid_entity_embedding_scores.to_csv(
+                self.config.output_dir / "entity_embedding_recall_scores.csv",
+                index=False,
+            )
+        else:
+            train_entity_embedding_scores = None
+            valid_entity_embedding_scores = None
+        section_started_at = mark("entity_embedding_recall", section_started_at)
+
         feature_builder = RankingFeatureBuilder(
             self.config.feature_columns,
             self.config.categorical_columns,
         ).fit(train_candidates, news)
-        train_features = feature_builder.transform(train_candidates, train_tfidf_scores)
-        valid_features = feature_builder.transform(valid_candidates, valid_tfidf_scores)
+        train_features = feature_builder.transform(
+            train_candidates,
+            train_tfidf_scores,
+            train_popularity_scores,
+            train_category_scores,
+            train_itemcf_scores,
+            train_entity_embedding_scores,
+        )
+        valid_features = feature_builder.transform(
+            valid_candidates,
+            valid_tfidf_scores,
+            valid_popularity_scores,
+            valid_category_scores,
+            valid_itemcf_scores,
+            valid_entity_embedding_scores,
+        )
         section_started_at = mark("feature_build", section_started_at)
 
         lgbm_params = dict(self.config.lgbm_params)
@@ -268,6 +342,10 @@ class RecommendationPipeline:
             "model_path": str(self.config.model_path),
             "recall": {
                 "use_tfidf_score": self.config.use_tfidf_score,
+                "use_popularity_score": self.config.use_popularity_score,
+                "use_category_score": self.config.use_category_score,
+                "use_itemcf_score": self.config.use_itemcf_score,
+                "use_entity_embedding_score": self.config.use_entity_embedding_score,
                 "train": train_recall_stats,
                 "valid": valid_recall_stats,
             },
