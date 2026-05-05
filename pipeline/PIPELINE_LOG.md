@@ -19,6 +19,135 @@ recall module 内部可以由多个 recall channels 组成。不同 recall 方�
 - Offline training / evaluation: 使用 multi-recall signals 作为 ranking features，在完整 candidate set 上评估。
 - Online / backend deployment: 使用 multi-recall topN 生成 candidate pool，然后用 LightGBM reranking做展示。
 
+## 2026-05-04 - Recall-stage Evaluation
+
+本轮新增 `pipeline/evaluate_recall.py`，用于评估 recall-stage candidate generation 效果，而不是评估 LightGBM ranking metrics。
+
+### Evaluation Metrics
+
+```text
+hit_rate:
+  有多少 impression 至少保住一个 clicked item
+
+positive_keep_rate:
+  所有 clicked items 里，有多少被 recall topN 保留下来
+
+candidate_keep_rate:
+  recall 保留了多少 candidate rows
+
+avg_candidates_kept_per_impression:
+  平均每个 impression 保留多少 candidates
+
+pairwise overlap / jaccard:
+  不同 recall 之间的 candidate overlap，用于判断 complementarity
+```
+
+默认只评估 `score > 0` 的 candidates，不用 0 分 candidates 补满 topN。`score = 0` 通常代表该 recall 对这个 candidate 没有有效匹配信号；如果用 0 分补满 topN，会受到 MIND shuffled candidate order 的随机影响，可能虚高 recall coverage。
+
+### Single Recall Results
+
+50k recall-stage evaluation 显示，单路 recall 里表现最好的是：
+
+```text
+TF-IDF（最佳）
+EntityEmbedding
+Category
+```
+
+在 `top100` 下：
+
+```text
+TF-IDF:
+  hit_rate = 0.8670
+  positive_keep_rate = 0.8488
+  avg_candidates = 29.82
+
+EntityEmbedding:
+  hit_rate = 0.8590
+  positive_keep_rate = 0.8053
+  avg_candidates = 26.79
+
+Category:
+  hit_rate = 0.7886
+  positive_keep_rate = 0.7613
+  avg_candidates = 23.67
+```
+
+`Popularity` 和 `ItemCF` 单路 coverage 明显较弱：
+
+```text
+Popularity top100:
+  positive_keep_rate = 0.3864
+
+ItemCF top100:
+  positive_keep_rate = 0.1465
+```
+
+### Multi-recall Union Results
+
+5路 union:
+
+```text
+TF-IDF + Popularity + Category + ItemCF + EntityEmbedding
+```
+
+3路 union:
+
+```text
+TF-IDF + EntityEmbedding + Category
+```
+
+50k 结果：
+
+```text
+5路 union@50:
+  positive_keep_rate = 0.9521
+  avg_candidates = 33.64
+
+3路 union@50:
+  positive_keep_rate = 0.9230
+  avg_candidates = 31.24
+
+5路 union@100:
+  positive_keep_rate = 0.9711
+  avg_candidates = 35.97
+
+3路 union@100:
+  positive_keep_rate = 0.9517
+  avg_candidates = 34.73
+```
+
+### Current Takeaway
+
+`Popularity` 和 `ItemCF` 单路 recall 较弱，但在 union 中能补到少量 clicked items。不过考虑 pipeline 结构简单性和模块可解释性，当前建议优先采用三路 recall：
+
+```text
+TF-IDF + EntityEmbedding + Category
+```
+
+当前阶段性方案：
+
+```text
+Current hybrid recall candidates:
+  TF-IDF
+  EntityEmbedding
+  Category
+
+暂不优先纳入:
+  Popularity
+  ItemCF
+```
+
+### Next Step
+
+```text
+1. 基于 TF-IDF + EntityEmbedding + Category 做 hybrid recall module。
+2. 测试 union@50 / union@100 后接 LightGBM rerank。
+3. 后续继续探索更强 neural recall，例如 two-tower / dual encoder / sentence embedding recall。
+```
+
+recall-stage evaluation 说明 multi-recall union 确实能显著提高 clicked item coverage；当前为了结构清晰，先选 `TF-IDF + EntityEmbedding + Category` 作为 hybrid recall 的主要组合。
+
 ## 2026-05-03 - Multi-recall Feature Ablation
 
 本轮继续扩展 recall sources，并把每一路 recall score 接入 LightGBM features 再次对比评估，用于 offline training / evaluation。
