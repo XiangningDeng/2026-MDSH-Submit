@@ -113,6 +113,7 @@ def assemble_features(
     category_scores: pd.DataFrame | None = None,
     itemcf_scores: pd.DataFrame | None = None,
     entity_embedding_scores: pd.DataFrame | None = None,
+    hybrid_recall_features: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     df = candidates.merge(
         impression_features.drop(columns=["history"]),
@@ -202,6 +203,51 @@ def assemble_features(
         df["entity_embedding_score"] = 0.0
         df["entity_embedding_rank"] = 0
         df["recalled_by_entity_embedding"] = 0
+    if hybrid_recall_features is not None:
+        score_cols = [
+            "impression_id",
+            "candidate_news_id",
+            "recalled_by_tfidf",
+            "recalled_by_popularity",
+            "recalled_by_category",
+            "recalled_by_itemcf",
+            "recalled_by_entity_embedding",
+            "recalled_by_num_sources",
+            "recall_source_overlap_count",
+            "max_recall_score",
+            "mean_recall_score",
+            "tfidf_rank",
+            "popularity_rank",
+            "category_rank",
+            "itemcf_rank",
+            "entity_embedding_rank",
+            "best_recall_rank",
+            "mean_recall_rank",
+        ]
+        df = df.merge(
+            hybrid_recall_features[score_cols],
+            on=["impression_id", "candidate_news_id"],
+            how="left",
+            suffixes=("", "_hybrid"),
+        )
+        for col in score_cols:
+            if col in {"impression_id", "candidate_news_id"}:
+                continue
+            hybrid_col = f"{col}_hybrid"
+            if hybrid_col in df.columns:
+                df[col] = df[hybrid_col].fillna(df[col] if col in df.columns else 0)
+                df = df.drop(columns=[hybrid_col])
+    else:
+        df["recalled_by_tfidf"] = 0
+        df["recalled_by_num_sources"] = 0
+        df["recall_source_overlap_count"] = 0
+        df["max_recall_score"] = 0.0
+        df["mean_recall_score"] = 0.0
+        df["tfidf_rank"] = 0
+        df["popularity_rank"] = 0
+        df["category_rank"] = 0
+        df["best_recall_rank"] = 0
+        df["mean_recall_rank"] = 0.0
 
     fill_map = {
         "category": "unknown",
@@ -231,6 +277,16 @@ def assemble_features(
         "entity_embedding_score": 0.0,
         "entity_embedding_rank": 0,
         "recalled_by_entity_embedding": 0,
+        "recalled_by_tfidf": 0,
+        "recalled_by_num_sources": 0,
+        "recall_source_overlap_count": 0,
+        "max_recall_score": 0.0,
+        "mean_recall_score": 0.0,
+        "tfidf_rank": 0,
+        "popularity_rank": 0,
+        "category_rank": 0,
+        "best_recall_rank": 0,
+        "mean_recall_rank": 0.0,
     }
     df = df.fillna(fill_map)
     history_len_safe = df["history_len"].replace(0, 1)
@@ -263,6 +319,7 @@ class RankingFeatureBuilder:
         category_scores: pd.DataFrame | None = None,
         itemcf_scores: pd.DataFrame | None = None,
         entity_embedding_scores: pd.DataFrame | None = None,
+        hybrid_recall_features: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
         if self.news_features is None or self.popularity_features is None:
             raise RuntimeError("Feature builder must be fit before transform.")
@@ -283,6 +340,7 @@ class RankingFeatureBuilder:
             category_scores,
             itemcf_scores,
             entity_embedding_scores,
+            hybrid_recall_features,
         )
         for col in self.categorical_columns:
             features[col] = features[col].astype("category")

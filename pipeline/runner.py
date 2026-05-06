@@ -13,6 +13,11 @@ from pipeline.metrics import evaluate_predictions, write_metrics
 from pipeline.rank_lgbm import LightGBMRanker, coordinate_search
 from pipeline.recall_category import CategoryRecallScorer
 from pipeline.recall_entity_embedding import EntityEmbeddingRecallScorer
+from pipeline.recall_hybrid import (
+    build_hybrid_recall_features,
+    build_hybrid_recall_pool,
+    filter_scores_to_candidates,
+)
 from pipeline.recall_itemcf import ItemCFRecallScorer
 from pipeline.recall_popularity import PopularityRecallScorer
 from pipeline.recall_tfidf import TfidfRecallScorer
@@ -35,6 +40,13 @@ class RecommendationPipeline:
             return df
         keep_ids = df["impression_id"].drop_duplicates().head(max_impressions)
         return df[df["impression_id"].isin(keep_ids)].reset_index(drop=True)
+
+    @property
+    def _hybrid_enabled(self) -> bool:
+        return (
+            self.config.hybrid_recall_top_n is not None
+            and self.config.hybrid_recall_top_n > 0
+        )
 
     @staticmethod
     def _apply_recall_top_k(
@@ -98,9 +110,32 @@ class RecommendationPipeline:
         limit = "full" if max_impressions is None or max_impressions <= 0 else str(max_impressions)
         return str(self.config.cache_dir / f"{split}_tfidf_scores_{limit}.csv")
 
+    def _recall_score_cache_path(
+        self,
+        split: str,
+        recall_name: str,
+        max_impressions: int | None,
+    ) -> str:
+        limit = "full" if max_impressions is None or max_impressions <= 0 else str(max_impressions)
+        return str(self.config.cache_dir / f"{split}_{recall_name}_recall_scores_{limit}.csv")
+
     @staticmethod
     def _load_or_score_tfidf(
         scorer: TfidfRecallScorer,
+        candidates: pd.DataFrame,
+        cache_path: str,
+    ) -> pd.DataFrame:
+        path = pd.io.common.stringify_path(cache_path)
+        try:
+            return pd.read_csv(path, dtype={"impression_id": str, "candidate_news_id": str})
+        except FileNotFoundError:
+            scores = scorer.score_candidates(candidates)
+            scores.to_csv(path, index=False)
+            return scores
+
+    @staticmethod
+    def _load_or_score_recall(
+        scorer,
         candidates: pd.DataFrame,
         cache_path: str,
     ) -> pd.DataFrame:
@@ -132,6 +167,13 @@ class RecommendationPipeline:
 
         np.random.seed(self.config.seed)
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
+        hybrid_enabled = self._hybrid_enabled
+        needs_hybrid_recall_features = self.config.use_hybrid_recall_features
+        hybrid_sources = (
+            set(self.config.hybrid_recall_sources)
+            if hybrid_enabled or needs_hybrid_recall_features
+            else set()
+        )
 
         section_started_at = time.perf_counter()
         train_candidates, valid_candidates, news = load_train_valid_data(self.config)
@@ -140,8 +182,10 @@ class RecommendationPipeline:
         train_candidates_for_recall_fit = train_candidates.copy()
         section_started_at = mark("data_prepare", section_started_at)
 
-        needs_tfidf = self.config.use_tfidf_score or (
-            self.config.recall_top_k is not None and self.config.recall_top_k > 0
+        needs_tfidf = (
+            self.config.use_tfidf_score
+            or (self.config.recall_top_k is not None and self.config.recall_top_k > 0)
+            or "tfidf" in hybrid_sources
         )
         if needs_tfidf:
             self.config.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -197,7 +241,7 @@ class RecommendationPipeline:
                 "impressions_fully_kept": int(valid_candidates["impression_id"].nunique()),
             }
 
-        if self.config.use_popularity_score:
+        if self.config.use_popularity_score or "popularity" in hybrid_sources:
             popularity = PopularityRecallScorer().fit(train_candidates_for_recall_fit, news)
             train_popularity_scores = popularity.score_candidates(train_candidates)
             valid_popularity_scores = popularity.score_candidates(valid_candidates)
@@ -209,7 +253,7 @@ class RecommendationPipeline:
             train_popularity_scores = None
             valid_popularity_scores = None
 
-        if self.config.use_category_score:
+        if self.config.use_category_score or "category" in hybrid_sources:
             category = CategoryRecallScorer().fit(news)
             train_category_scores = category.score_candidates(train_candidates)
             valid_category_scores = category.score_candidates(valid_candidates)
@@ -222,7 +266,7 @@ class RecommendationPipeline:
             valid_category_scores = None
         section_started_at = mark("popularity_category_recall", section_started_at)
 
-        if self.config.use_itemcf_score:
+        if self.config.use_itemcf_score or "itemcf" in hybrid_sources:
             itemcf = ItemCFRecallScorer().fit(train_candidates_for_recall_fit)
             train_itemcf_scores = itemcf.score_candidates(train_candidates)
             valid_itemcf_scores = itemcf.score_candidates(valid_candidates)
@@ -235,14 +279,31 @@ class RecommendationPipeline:
             valid_itemcf_scores = None
         section_started_at = mark("itemcf_recall", section_started_at)
 
-        if self.config.use_entity_embedding_score:
+        if self.config.use_entity_embedding_score or "entity_embedding" in hybrid_sources:
             entity_embedding_paths = [
                 self.config.train_entity_embedding_path,
                 self.config.valid_entity_embedding_path,
             ]
             entity_embedding = EntityEmbeddingRecallScorer(entity_embedding_paths).fit(news)
-            train_entity_embedding_scores = entity_embedding.score_candidates(train_candidates)
-            valid_entity_embedding_scores = entity_embedding.score_candidates(valid_candidates)
+            self.config.cache_dir.mkdir(parents=True, exist_ok=True)
+            train_entity_embedding_scores = self._load_or_score_recall(
+                entity_embedding,
+                train_candidates,
+                self._recall_score_cache_path(
+                    "train",
+                    "entity_embedding",
+                    max_train_impressions,
+                ),
+            )
+            valid_entity_embedding_scores = self._load_or_score_recall(
+                entity_embedding,
+                valid_candidates,
+                self._recall_score_cache_path(
+                    "valid",
+                    "entity_embedding",
+                    max_valid_impressions,
+                ),
+            )
             valid_entity_embedding_scores.to_csv(
                 self.config.output_dir / "entity_embedding_recall_scores.csv",
                 index=False,
@@ -252,25 +313,103 @@ class RecommendationPipeline:
             valid_entity_embedding_scores = None
         section_started_at = mark("entity_embedding_recall", section_started_at)
 
+        train_scores_by_recall = {
+            "tfidf": train_tfidf_scores,
+            "popularity": train_popularity_scores,
+            "category": train_category_scores,
+            "itemcf": train_itemcf_scores,
+            "entity_embedding": train_entity_embedding_scores,
+        }
+        valid_scores_by_recall = {
+            "tfidf": valid_tfidf_scores,
+            "popularity": valid_popularity_scores,
+            "category": valid_category_scores,
+            "itemcf": valid_itemcf_scores,
+            "entity_embedding": valid_entity_embedding_scores,
+        }
+        train_selected_scores = {
+            source: train_scores_by_recall[source]
+            for source in self.config.hybrid_recall_sources
+        }
+        valid_selected_scores = {
+            source: valid_scores_by_recall[source]
+            for source in self.config.hybrid_recall_sources
+        }
+        train_hybrid_recall_features = None
+        valid_hybrid_recall_features = None
+        if self.config.use_hybrid_recall_features:
+            train_hybrid_recall_features = build_hybrid_recall_features(
+                train_candidates,
+                train_selected_scores,
+            )
+            valid_hybrid_recall_features = build_hybrid_recall_features(
+                valid_candidates,
+                valid_selected_scores,
+            )
+        section_started_at = mark("hybrid_recall_features", section_started_at)
+
+        train_hybrid_stats = {"enabled": False}
+        valid_hybrid_stats = {"enabled": False}
+        if hybrid_enabled:
+            train_candidates, train_hybrid_stats = build_hybrid_recall_pool(
+                train_candidates,
+                train_selected_scores,
+                self.config.hybrid_recall_top_n,
+                self.config.hybrid_include_zero_score,
+            )
+            valid_candidates, valid_hybrid_stats = build_hybrid_recall_pool(
+                valid_candidates,
+                valid_selected_scores,
+                self.config.hybrid_recall_top_n,
+                self.config.hybrid_include_zero_score,
+            )
+            train_tfidf_scores = filter_scores_to_candidates(train_tfidf_scores, train_candidates)
+            valid_tfidf_scores = filter_scores_to_candidates(valid_tfidf_scores, valid_candidates)
+            train_popularity_scores = filter_scores_to_candidates(train_popularity_scores, train_candidates)
+            valid_popularity_scores = filter_scores_to_candidates(valid_popularity_scores, valid_candidates)
+            train_category_scores = filter_scores_to_candidates(train_category_scores, train_candidates)
+            valid_category_scores = filter_scores_to_candidates(valid_category_scores, valid_candidates)
+            train_itemcf_scores = filter_scores_to_candidates(train_itemcf_scores, train_candidates)
+            valid_itemcf_scores = filter_scores_to_candidates(valid_itemcf_scores, valid_candidates)
+            train_entity_embedding_scores = filter_scores_to_candidates(
+                train_entity_embedding_scores,
+                train_candidates,
+            )
+            valid_entity_embedding_scores = filter_scores_to_candidates(
+                valid_entity_embedding_scores,
+                valid_candidates,
+            )
+            train_hybrid_recall_features = filter_scores_to_candidates(
+                train_hybrid_recall_features,
+                train_candidates,
+            )
+            valid_hybrid_recall_features = filter_scores_to_candidates(
+                valid_hybrid_recall_features,
+                valid_candidates,
+            )
+        section_started_at = mark("hybrid_recall_cutoff", section_started_at)
+
         feature_builder = RankingFeatureBuilder(
             self.config.feature_columns,
             self.config.categorical_columns,
         ).fit(train_candidates, news)
         train_features = feature_builder.transform(
             train_candidates,
-            train_tfidf_scores,
-            train_popularity_scores,
-            train_category_scores,
-            train_itemcf_scores,
-            train_entity_embedding_scores,
+            train_tfidf_scores if self.config.use_tfidf_score else None,
+            train_popularity_scores if self.config.use_popularity_score else None,
+            train_category_scores if self.config.use_category_score else None,
+            train_itemcf_scores if self.config.use_itemcf_score else None,
+            train_entity_embedding_scores if self.config.use_entity_embedding_score else None,
+            train_hybrid_recall_features if self.config.use_hybrid_recall_features else None,
         )
         valid_features = feature_builder.transform(
             valid_candidates,
-            valid_tfidf_scores,
-            valid_popularity_scores,
-            valid_category_scores,
-            valid_itemcf_scores,
-            valid_entity_embedding_scores,
+            valid_tfidf_scores if self.config.use_tfidf_score else None,
+            valid_popularity_scores if self.config.use_popularity_score else None,
+            valid_category_scores if self.config.use_category_score else None,
+            valid_itemcf_scores if self.config.use_itemcf_score else None,
+            valid_entity_embedding_scores if self.config.use_entity_embedding_score else None,
+            valid_hybrid_recall_features if self.config.use_hybrid_recall_features else None,
         )
         section_started_at = mark("feature_build", section_started_at)
 
@@ -300,7 +439,10 @@ class RecommendationPipeline:
             reranked_predictions["label"] = valid_features["label"].astype(int)
         reranked_predictions["score"] = valid_scores
 
-        if self.config.recall_top_k is None or self.config.recall_top_k <= 0:
+        if (
+            (self.config.recall_top_k is None or self.config.recall_top_k <= 0)
+            and not hybrid_enabled
+        ):
             predictions = reranked_predictions
         else:
             predictions = full_valid_candidates[
@@ -346,6 +488,11 @@ class RecommendationPipeline:
                 "use_category_score": self.config.use_category_score,
                 "use_itemcf_score": self.config.use_itemcf_score,
                 "use_entity_embedding_score": self.config.use_entity_embedding_score,
+                "use_hybrid_recall_features": self.config.use_hybrid_recall_features,
+                "hybrid": {
+                    "train": train_hybrid_stats,
+                    "valid": valid_hybrid_stats,
+                },
                 "train": train_recall_stats,
                 "valid": valid_recall_stats,
             },

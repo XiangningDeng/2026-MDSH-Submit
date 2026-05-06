@@ -19,6 +19,24 @@ def main() -> None:
         help="Optional TF-IDF recall cutoff per impression before LightGBM reranking.",
     )
     parser.add_argument(
+        "--hybrid-recall-top-n",
+        type=int,
+        default=None,
+        help="Optional topN per recall source for multi-recall candidate generation before LightGBM reranking.",
+    )
+    parser.add_argument(
+        "--hybrid-recalls",
+        nargs="+",
+        choices=["tfidf", "popularity", "category", "itemcf", "entity_embedding"],
+        default=["tfidf", "entity_embedding", "category"],
+        help="Recall sources to union when --hybrid-recall-top-n is set.",
+    )
+    parser.add_argument(
+        "--hybrid-include-zero-score",
+        action="store_true",
+        help="Allow zero-score candidates to fill each recall source topN.",
+    )
+    parser.add_argument(
         "--use-tfidf-score",
         action="store_true",
         help="Include tfidf_score in LightGBM features for ablation.",
@@ -42,6 +60,11 @@ def main() -> None:
         "--use-entity-embedding-score",
         action="store_true",
         help="Include entity embedding recall scores in LightGBM features for ablation.",
+    )
+    parser.add_argument(
+        "--use-hybrid-recall-features",
+        action="store_true",
+        help="Include multi-recall interaction features in LightGBM without candidate cutoff.",
     )
     parser.add_argument(
         "--max-train-impressions",
@@ -71,11 +94,15 @@ def main() -> None:
         cache_dir=Path(args.cache_dir),
         top_k=args.top_k,
         recall_top_k=args.recall_top_k,
+        hybrid_recall_top_n=args.hybrid_recall_top_n,
+        hybrid_recall_sources=args.hybrid_recalls,
+        hybrid_include_zero_score=args.hybrid_include_zero_score,
         use_tfidf_score=args.use_tfidf_score,
         use_popularity_score=args.use_popularity_score,
         use_category_score=args.use_category_score,
         use_itemcf_score=args.use_itemcf_score,
         use_entity_embedding_score=args.use_entity_embedding_score,
+        use_hybrid_recall_features=args.use_hybrid_recall_features,
     )
     result = RecommendationPipeline(config).run(
         mode=args.mode,

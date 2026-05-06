@@ -19,6 +19,178 @@ recall module 内部可以由多个 recall channels 组成。不同 recall 方�
 - Offline training / evaluation: 使用 multi-recall signals 作为 ranking features，在完整 candidate set 上评估。
 - Online / backend deployment: 使用 multi-recall topN 生成 candidate pool，然后用 LightGBM reranking做展示。
 
+## 2026-05-05 - Hybrid Recall Filtering vs Multi-recall Features
+
+本轮主要区分了 multi-recall 的两种接法：
+
+```text
+1. multi-recall as filtering:
+   先用多路 recall topN union 筛 candidate，再交给 LightGBM rerank。
+
+2. multi-recall as ranking features:
+   不筛 candidate，在完整 candidate set 上加入 multi-recall interaction features，再交给 LightGBM ranking。
+```
+
+### Files / CLI Updated
+
+新增：
+
+```text
+pipeline/recall_hybrid.py
+```
+
+新增 CLI：
+
+```text
+--hybrid-recall-top-n
+--hybrid-recalls
+--hybrid-include-zero-score
+--use-hybrid-recall-features
+```
+
+说明：
+
+```text
+--hybrid-recall-top-n / --hybrid-recalls:
+  用 multi-recall 做 candidate generation / filtering。
+
+--use-hybrid-recall-features:
+  不做 cutoff，只把 multi-recall interaction features 加入 LightGBM。
+```
+
+当前使用的三路 recall：
+
+```text
+TF-IDF + EntityEmbedding + Category
+```
+
+### A. Multi-recall Filtering Results
+
+下面结果都是 full validation results，不加入 recall features，只测试：
+
+```text
+TF-IDF / EntityEmbedding / Category
+-> 每路 topN
+-> union 去重
+-> LightGBM rerank
+```
+
+| Run | Candidate Reduction | Positive Keep Rate | Hit Rate | AUC | MRR | nDCG@5 | nDCG@10 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 3路 union@20 + LightGBM | **40.88%** | 81.32% | 89.97% | 0.5964 | 0.3328 | 0.3117 | 0.3705 |
+| 3路 union@50 + LightGBM | 16.84% | 92.35% | 94.93% | 0.6219 | 0.3394 | 0.3209 | 0.3828 |
+| 3路 union@100 + LightGBM | 7.61% | **95.21%** | **95.72%** | **0.6298** | **0.3433** | **0.3261** | **0.3860** |
+
+Takeaway:
+
+```text
+在 full validation 上，ranking metrics 随 topN 增大而上升。
+全量下 positive coverage 的影响更明显，union@100 保留最多 clicked items，
+因此 ranking metrics 最高。
+
+但 union@100 只减少 7.61% candidates，candidate reduction 很弱；
+union@50 减少 16.84% candidates，同时保留 92.35% clicked items，
+是更平衡的 backend candidate generation 设置；
+union@20 reduction 最强，但 full ranking metrics 损失也最明显。
+```
+
+和 full-candidate LightGBM baseline 相比：
+
+```text
+Pipeline LightGBM baseline no cutoff no tune:
+  AUC = 0.6408
+  MRR = 0.3539
+  nDCG@5 = 0.3366
+  nDCG@10 = 0.3962
+
+Best full hybrid filtering result union@100:
+  AUC = 0.6298
+  MRR = 0.3433
+  nDCG@5 = 0.3261
+  nDCG@10 = 0.3860
+```
+
+因此，full-candidate offline ranking 结果仍然优先报告 LightGBM baseline / hybrid recall features；hybrid filtering 更适合作为 backend candidate generation trade-off 展示。
+
+### B. Multi-recall Features Results
+
+本轮更重要的发现是：raw single recall score 效果不好，但 multi-recall interaction features 有明显价值。
+
+新增的主要 features 包括：
+
+```text
+recalled_by_tfidf
+recalled_by_category
+recalled_by_entity_embedding
+recalled_by_num_sources
+recall_source_overlap_count
+max_recall_score
+mean_recall_score
+tfidf_rank
+category_rank
+entity_embedding_rank
+best_recall_rank
+mean_recall_rank
+```
+
+Full validation results：
+
+| Run | Description | AUC | MRR | nDCG@5 | nDCG@10 |
+|---|---|---:|---:|---:|---:|
+| Pipeline LightGBM baseline | full, no recall features, no cutoff, no tune | 0.6408 | **0.3539** | **0.3366** | **0.3962** |
+| Pipeline LightGBM baseline + tune | full, no recall features, no cutoff, `--tune-lgbm` | **0.6462** | 0.3482 | 0.3323 | 0.3925 |
+| Hybrid recall features | full, no cutoff, no tune | 0.6373 | 0.3523 | 0.3365 | 0.3943 |
+| Hybrid recall features + tune | full, no cutoff, `--tune-lgbm` | 0.6376 | 0.3518 | 0.3361 | 0.3940 |
+
+Takeaway:
+
+```text
+Hybrid recall features 没有超过 Pipeline LightGBM baseline 的最高 AUC，
+整体 metrics 和 Pipeline LightGBM baseline no tune 非常接近。
+
+同时，和 Pipeline LightGBM baseline + tune 相比，
+Hybrid recall features 的 MRR / nDCG@5 / nDCG@10 更高。
+这说明 multi-recall interaction features 对 top-ranking metrics 有帮助，
+也比直接加入 raw single recall score 更有效。
+```
+
+Feature importance 中稳定靠前的 multi-recall features：
+
+```text
+mean_recall_rank
+best_recall_rank
+recalled_by_num_sources
+recalled_by_tfidf
+recall_source_overlap_count
+mean_recall_score
+```
+
+### Current Takeaway
+
+当前最重要结论：
+
+```text
+1. multi-recall filtering:
+   能展示 candidate reduction 和 positive_keep_rate 的 trade-off，
+   full validation 上 union@100 ranking metrics 最高，
+   但 candidate reduction 很弱；union@50 是更平衡的 backend candidate generation 设置。
+
+2. multi-recall features:
+   是目前比 raw single recall score 更有效的 ranking signal。
+   在 full candidates 上不丢 positives，整体表现接近 Pipeline LightGBM baseline，
+   并且相对 tuned baseline 提升了 MRR / nDCG@5 / nDCG@10。
+```
+
+后续建议：
+
+```text
+1. 报告 offline ranking result 时，重点使用 multi-recall features + LightGBM no cutoff。
+2. backend / inference 时，使用 multi-recall topN candidate generation + LightGBM rerank；
+   当前优先展示 union@50 的平衡版本，也可同时报告 union@100 的最高 ranking metrics。
+3. 后续继续尝试更强 recall source，例如 BM25、sentence embedding、two-tower / dual encoder。
+4. 如果继续优化 ranking，可尝试更贴近 ranking 的 tuning objective 或更多 feature ablation。
+```
+
 ## 2026-05-04 - Recall-stage Evaluation
 
 本轮新增 `pipeline/evaluate_recall.py`，用于评估 recall-stage candidate generation 效果，而不是评估 LightGBM ranking metrics。
@@ -313,7 +485,7 @@ pipeline/PIPELINE_LOG.md
 
 重要说明：
 
-- 默认情况下不加入任何 recall score features，也就是 LightGBM-only pipeline。需要哪个 recall feature，就显式加对应的 `--use-...-score`。
+- 默认情况下不加入任何 recall score features，也就是 Pipeline LightGBM baseline。需要哪个 recall feature，就显式加对应的 `--use-...-score`。
 - `--recall-top-k K` 会启用 online-style TF-IDF recall cutoff，也就是先用 TF-IDF 每个 impression 保留 topK candidates，再交给 LightGBM reranking。
 - `--use-tfidf-score` 会把 `tfidf_score` 加进 LightGBM features。其他 recall score 也是同样逻辑。
 - 当前的 `inference` mode 还不是真正的 production serving。它目前仍然会训练并预测，只是不输出 metrics。
@@ -344,8 +516,8 @@ max: 295
 
 | Run | Description | AUC | MRR | nDCG@5 | nDCG@10 |
 |---|---|---:|---:|---:|---:|
-| Original LightGBM baseline | LightGBM baseline | 0.6408 | **0.3539** | **0.3366** | **0.3962** |
-| LightGBM-only via pipeline | Sanity check / ablation: `--tune-lgbm` | **0.6462** | 0.3482 | 0.3323 | 0.3925 |
+| Pipeline LightGBM baseline | full, no recall features, no cutoff, no tune | 0.6408 | **0.3539** | **0.3366** | **0.3962** |
+| Pipeline LightGBM baseline + tune | full, no recall features, no cutoff, `--tune-lgbm` | **0.6462** | 0.3482 | 0.3323 | 0.3925 |
 | TF-IDF score + LightGBM | No cutoff, tuned LightGBM | 0.6218 | 0.3455 | 0.3253 | 0.3849 |
 | TF-IDF recall top20 + LightGBM | Online-style cutoff, no tuning | 0.5752 | 0.3229 | 0.3000 | 0.3580 |
 | TF-IDF recall top50 + LightGBM | Online-style cutoff, no tuning | 0.5907 | 0.3368 | 0.3173 | 0.3741 |

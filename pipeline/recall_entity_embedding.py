@@ -49,22 +49,30 @@ class EntityEmbeddingRecallScorer:
         scored["impression_id"] = scored["impression_id"].astype(str)
         scored["candidate_news_id"] = scored["candidate_news_id"].astype(str)
         scored["history"] = scored["history"].fillna("").astype(str)
-        scored["entity_embedding_score"] = 0.0
+        score_values = np.zeros(len(scored), dtype=np.float32)
+        candidate_ids = scored["candidate_news_id"].to_numpy()
+        histories = scored["history"].to_numpy()
 
-        for _, group in scored.groupby("impression_id", sort=False):
-            user_vec = self._user_vector(str(group["history"].iloc[0]))
+        for positions in scored.groupby("impression_id", sort=False).indices.values():
+            user_vec = self._user_vector(str(histories[positions[0]]))
             if user_vec is None:
                 continue
 
-            candidate_ids = group["candidate_news_id"].astype(str)
-            known_mask = candidate_ids.isin(self.news_id_to_idx)
-            if not known_mask.any():
+            known_positions = []
+            matrix_rows = []
+            for pos in positions:
+                news_idx = self.news_id_to_idx.get(candidate_ids[pos])
+                if news_idx is not None:
+                    known_positions.append(pos)
+                    matrix_rows.append(news_idx)
+            if not known_positions:
                 continue
 
-            matrix_rows = [self.news_id_to_idx[nid] for nid in candidate_ids[known_mask]]
-            scores = self.news_vectors[matrix_rows] @ user_vec
-            scored.loc[group.index[known_mask], "entity_embedding_score"] = scores
+            score_values[np.asarray(known_positions, dtype=np.int64)] = (
+                self.news_vectors[np.asarray(matrix_rows, dtype=np.int64)] @ user_vec
+            )
 
+        scored["entity_embedding_score"] = score_values
         scored["recalled_by_entity_embedding"] = (
             scored["entity_embedding_score"] > 0
         ).astype(np.int8)

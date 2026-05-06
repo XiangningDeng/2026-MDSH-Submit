@@ -72,6 +72,16 @@ FEATURE_COLUMNS = [
     "entity_embedding_score",
     "entity_embedding_rank",
     "recalled_by_entity_embedding",
+    "recalled_by_tfidf",
+    "recalled_by_num_sources",
+    "recall_source_overlap_count",
+    "max_recall_score",
+    "mean_recall_score",
+    "tfidf_rank",
+    "popularity_rank",
+    "category_rank",
+    "best_recall_rank",
+    "mean_recall_rank",
     "history_len",
     "history_unique_len",
     "hour",
@@ -94,6 +104,27 @@ FEATURE_COLUMNS = [
 
 CATEGORICAL_COLUMNS = ["category", "subcategory"]
 
+RECALL_SOURCES = ["tfidf", "popularity", "category", "itemcf", "entity_embedding"]
+
+HYBRID_RECALL_FEATURE_COLUMNS = [
+    "recalled_by_tfidf",
+    "recalled_by_popularity",
+    "recalled_by_category",
+    "recalled_by_itemcf",
+    "recalled_by_entity_embedding",
+    "recalled_by_num_sources",
+    "recall_source_overlap_count",
+    "max_recall_score",
+    "mean_recall_score",
+    "tfidf_rank",
+    "popularity_rank",
+    "category_rank",
+    "itemcf_rank",
+    "entity_embedding_rank",
+    "best_recall_rank",
+    "mean_recall_rank",
+]
+
 
 @dataclass
 class PipelineConfig:
@@ -107,6 +138,12 @@ class PipelineConfig:
     use_category_score: bool = False
     use_itemcf_score: bool = False
     use_entity_embedding_score: bool = False
+    use_hybrid_recall_features: bool = False
+    hybrid_recall_top_n: int | None = None
+    hybrid_recall_sources: list[str] = field(
+        default_factory=lambda: ["tfidf", "entity_embedding", "category"]
+    )
+    hybrid_include_zero_score: bool = False
     seed: int = SEED
     tfidf_params: dict = field(default_factory=lambda: dict(TFIDF_PARAMS))
     lgbm_params: dict = field(default_factory=lambda: dict(LIGHTGBM_BEST_PARAMS))
@@ -151,6 +188,10 @@ class PipelineConfig:
         return self.project_root / "data/valid/entity_embedding.vec"
 
     def __post_init__(self) -> None:
+        unknown_sources = set(self.hybrid_recall_sources) - set(RECALL_SOURCES)
+        if unknown_sources:
+            raise ValueError(f"Unknown hybrid recall sources: {sorted(unknown_sources)}")
+
         if not self.use_tfidf_score:
             self.feature_columns = [
                 col for col in self.feature_columns if col != "tfidf_score"
@@ -193,4 +234,13 @@ class PipelineConfig:
             }
             self.feature_columns = [
                 col for col in self.feature_columns if col not in entity_embedding_cols
+            ]
+        if self.use_hybrid_recall_features:
+            for col in HYBRID_RECALL_FEATURE_COLUMNS:
+                if col not in self.feature_columns:
+                    self.feature_columns.append(col)
+        else:
+            hybrid_recall_cols = set(HYBRID_RECALL_FEATURE_COLUMNS)
+            self.feature_columns = [
+                col for col in self.feature_columns if col not in hybrid_recall_cols
             ]
