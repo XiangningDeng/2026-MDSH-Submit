@@ -109,10 +109,12 @@ def assemble_features(
     category_counts: pd.DataFrame,
     subcategory_counts: pd.DataFrame,
     tfidf_scores: pd.DataFrame | None = None,
+    bm25_scores: pd.DataFrame | None = None,
     popularity_scores: pd.DataFrame | None = None,
     category_scores: pd.DataFrame | None = None,
     itemcf_scores: pd.DataFrame | None = None,
     entity_embedding_scores: pd.DataFrame | None = None,
+    sentence_embedding_scores: pd.DataFrame | None = None,
     hybrid_recall_features: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     df = candidates.merge(
@@ -129,6 +131,23 @@ def assemble_features(
         df = df.merge(tfidf_scores[score_cols], on=["impression_id", "candidate_news_id"], how="left")
     else:
         df["tfidf_score"] = 0.0
+    if bm25_scores is not None:
+        score_cols = [
+            "impression_id",
+            "candidate_news_id",
+            "bm25_score",
+            "bm25_rank",
+            "recalled_by_bm25",
+        ]
+        df = df.merge(
+            bm25_scores[score_cols],
+            on=["impression_id", "candidate_news_id"],
+            how="left",
+        )
+    else:
+        df["bm25_score"] = 0.0
+        df["bm25_rank"] = 0
+        df["recalled_by_bm25"] = 0
     if popularity_scores is not None:
         score_cols = [
             "impression_id",
@@ -203,24 +222,45 @@ def assemble_features(
         df["entity_embedding_score"] = 0.0
         df["entity_embedding_rank"] = 0
         df["recalled_by_entity_embedding"] = 0
+    if sentence_embedding_scores is not None:
+        score_cols = [
+            "impression_id",
+            "candidate_news_id",
+            "sentence_embedding_score",
+            "sentence_embedding_rank",
+            "recalled_by_sentence_embedding",
+        ]
+        df = df.merge(
+            sentence_embedding_scores[score_cols],
+            on=["impression_id", "candidate_news_id"],
+            how="left",
+        )
+    else:
+        df["sentence_embedding_score"] = 0.0
+        df["sentence_embedding_rank"] = 0
+        df["recalled_by_sentence_embedding"] = 0
     if hybrid_recall_features is not None:
         score_cols = [
             "impression_id",
             "candidate_news_id",
             "recalled_by_tfidf",
+            "recalled_by_bm25",
             "recalled_by_popularity",
             "recalled_by_category",
             "recalled_by_itemcf",
             "recalled_by_entity_embedding",
+            "recalled_by_sentence_embedding",
             "recalled_by_num_sources",
             "recall_source_overlap_count",
             "max_recall_score",
             "mean_recall_score",
             "tfidf_rank",
+            "bm25_rank",
             "popularity_rank",
             "category_rank",
             "itemcf_rank",
             "entity_embedding_rank",
+            "sentence_embedding_rank",
             "best_recall_rank",
             "mean_recall_rank",
         ]
@@ -244,8 +284,12 @@ def assemble_features(
         df["max_recall_score"] = 0.0
         df["mean_recall_score"] = 0.0
         df["tfidf_rank"] = 0
+        df["bm25_rank"] = 0
         df["popularity_rank"] = 0
         df["category_rank"] = 0
+        df["itemcf_rank"] = 0
+        df["entity_embedding_rank"] = 0
+        df["sentence_embedding_rank"] = 0
         df["best_recall_rank"] = 0
         df["mean_recall_rank"] = 0.0
 
@@ -262,6 +306,9 @@ def assemble_features(
         "history_category_count": 0,
         "history_subcategory_count": 0,
         "tfidf_score": 0.0,
+        "bm25_score": 0.0,
+        "bm25_rank": 0,
+        "recalled_by_bm25": 0,
         "global_popularity_score": 0.0,
         "recent_popularity_score": 0.0,
         "category_popularity_score": 0.0,
@@ -277,12 +324,17 @@ def assemble_features(
         "entity_embedding_score": 0.0,
         "entity_embedding_rank": 0,
         "recalled_by_entity_embedding": 0,
+        "sentence_embedding_score": 0.0,
+        "sentence_embedding_rank": 0,
+        "recalled_by_sentence_embedding": 0,
         "recalled_by_tfidf": 0,
+        "recalled_by_bm25": 0,
         "recalled_by_num_sources": 0,
         "recall_source_overlap_count": 0,
         "max_recall_score": 0.0,
         "mean_recall_score": 0.0,
         "tfidf_rank": 0,
+        "bm25_rank": 0,
         "popularity_rank": 0,
         "category_rank": 0,
         "best_recall_rank": 0,
@@ -315,10 +367,12 @@ class RankingFeatureBuilder:
         self,
         candidates: pd.DataFrame,
         tfidf_scores: pd.DataFrame | None = None,
+        bm25_scores: pd.DataFrame | None = None,
         popularity_scores: pd.DataFrame | None = None,
         category_scores: pd.DataFrame | None = None,
         itemcf_scores: pd.DataFrame | None = None,
         entity_embedding_scores: pd.DataFrame | None = None,
+        sentence_embedding_scores: pd.DataFrame | None = None,
         hybrid_recall_features: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
         if self.news_features is None or self.popularity_features is None:
@@ -336,10 +390,12 @@ class RankingFeatureBuilder:
             category_counts,
             subcategory_counts,
             tfidf_scores,
+            bm25_scores,
             popularity_scores,
             category_scores,
             itemcf_scores,
             entity_embedding_scores,
+            sentence_embedding_scores,
             hybrid_recall_features,
         )
         for col in self.categorical_columns:

@@ -27,7 +27,15 @@ def main() -> None:
     parser.add_argument(
         "--hybrid-recalls",
         nargs="+",
-        choices=["tfidf", "popularity", "category", "itemcf", "entity_embedding"],
+        choices=[
+            "tfidf",
+            "bm25",
+            "popularity",
+            "category",
+            "itemcf",
+            "entity_embedding",
+            "sentence_embedding",
+        ],
         default=["tfidf", "entity_embedding", "category"],
         help="Recall sources to union when --hybrid-recall-top-n is set.",
     )
@@ -40,6 +48,11 @@ def main() -> None:
         "--use-tfidf-score",
         action="store_true",
         help="Include tfidf_score in LightGBM features for ablation.",
+    )
+    parser.add_argument(
+        "--use-bm25-score",
+        action="store_true",
+        help="Include BM25 recall scores in LightGBM features for ablation.",
     )
     parser.add_argument(
         "--use-popularity-score",
@@ -60,6 +73,11 @@ def main() -> None:
         "--use-entity-embedding-score",
         action="store_true",
         help="Include entity embedding recall scores in LightGBM features for ablation.",
+    )
+    parser.add_argument(
+        "--use-sentence-embedding-score",
+        action="store_true",
+        help="Include sentence embedding recall scores in LightGBM features for ablation.",
     )
     parser.add_argument(
         "--use-hybrid-recall-features",
@@ -98,10 +116,12 @@ def main() -> None:
         hybrid_recall_sources=args.hybrid_recalls,
         hybrid_include_zero_score=args.hybrid_include_zero_score,
         use_tfidf_score=args.use_tfidf_score,
+        use_bm25_score=args.use_bm25_score,
         use_popularity_score=args.use_popularity_score,
         use_category_score=args.use_category_score,
         use_itemcf_score=args.use_itemcf_score,
         use_entity_embedding_score=args.use_entity_embedding_score,
+        use_sentence_embedding_score=args.use_sentence_embedding_score,
         use_hybrid_recall_features=args.use_hybrid_recall_features,
     )
     result = RecommendationPipeline(config).run(

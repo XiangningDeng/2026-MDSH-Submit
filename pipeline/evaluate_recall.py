@@ -12,19 +12,23 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from pipeline.config import PipelineConfig
 from pipeline.data_prepare import load_train_valid_data
+from pipeline.recall_bm25 import BM25RecallScorer
 from pipeline.recall_category import CategoryRecallScorer
 from pipeline.recall_entity_embedding import EntityEmbeddingRecallScorer
 from pipeline.recall_itemcf import ItemCFRecallScorer
 from pipeline.recall_popularity import PopularityRecallScorer
+from pipeline.recall_sentence_embedding import SentenceEmbeddingRecallScorer
 from pipeline.recall_tfidf import TfidfRecallScorer
 
 
 RECALL_SCORE_COLUMNS = {
     "tfidf": "tfidf_score",
+    "bm25": "bm25_score",
     "popularity": "popularity_score",
     "category": "category_recall_combined_score",
     "itemcf": "itemcf_score",
     "entity_embedding": "entity_embedding_score",
+    "sentence_embedding": "sentence_embedding_score",
 }
 
 
@@ -84,6 +88,12 @@ def score_recall(
             train_scores = scorer.score_candidates(train_candidates)
             write_scores(train_scores, train_cache)
         valid_scores = scorer.score_candidates(valid_candidates)
+    elif recall_name == "bm25":
+        scorer = BM25RecallScorer(config.bm25_params).fit(news)
+        if train_scores is None:
+            train_scores = scorer.score_candidates(train_candidates)
+            write_scores(train_scores, train_cache)
+        valid_scores = scorer.score_candidates(valid_candidates)
     elif recall_name == "popularity":
         scorer = PopularityRecallScorer().fit(train_candidates, news)
         if train_scores is None:
@@ -106,6 +116,12 @@ def score_recall(
         scorer = EntityEmbeddingRecallScorer(
             [config.train_entity_embedding_path, config.valid_entity_embedding_path]
         ).fit(news)
+        if train_scores is None:
+            train_scores = scorer.score_candidates(train_candidates)
+            write_scores(train_scores, train_cache)
+        valid_scores = scorer.score_candidates(valid_candidates)
+    elif recall_name == "sentence_embedding":
+        scorer = SentenceEmbeddingRecallScorer(config.sentence_embedding_path).fit(news)
         if train_scores is None:
             train_scores = scorer.score_candidates(train_candidates)
             write_scores(train_scores, train_cache)

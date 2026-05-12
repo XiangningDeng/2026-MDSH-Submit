@@ -6,10 +6,12 @@ import pandas as pd
 
 RECALL_SCORE_COLUMNS = {
     "tfidf": "tfidf_score",
+    "bm25": "bm25_score",
     "popularity": "popularity_score",
     "category": "category_recall_combined_score",
     "itemcf": "itemcf_score",
     "entity_embedding": "entity_embedding_score",
+    "sentence_embedding": "sentence_embedding_score",
 }
 
 
@@ -193,19 +195,23 @@ def build_hybrid_recall_features(
         "impression_id",
         "candidate_news_id",
         "recalled_by_tfidf",
+        "recalled_by_bm25",
         "recalled_by_popularity",
         "recalled_by_category",
         "recalled_by_itemcf",
         "recalled_by_entity_embedding",
+        "recalled_by_sentence_embedding",
         "recalled_by_num_sources",
         "recall_source_overlap_count",
         "max_recall_score",
         "mean_recall_score",
         "tfidf_rank",
+        "bm25_rank",
         "popularity_rank",
         "category_rank",
         "itemcf_rank",
         "entity_embedding_rank",
+        "sentence_embedding_rank",
         "best_recall_rank",
         "mean_recall_rank",
     ]

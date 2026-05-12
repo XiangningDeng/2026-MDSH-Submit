@@ -28,6 +28,18 @@ TFIDF_PARAMS = {
     "token_pattern": r"(?u)\b\w+\b",
 }
 
+BM25_PARAMS = {
+    "vectorizer": {
+        "max_features": 50_000,
+        "ngram_range": (1, 1),
+        "min_df": 2,
+        "stop_words": "english",
+        "token_pattern": r"(?u)\b\w+\b",
+    },
+    "k1": 1.5,
+    "b": 0.75,
+}
+
 LIGHTGBM_BEST_PARAMS = {
     "objective": "binary",
     "metric": "auc",
@@ -57,6 +69,9 @@ LGBM_SEARCH_SPACE = {
 
 FEATURE_COLUMNS = [
     "tfidf_score",
+    "bm25_score",
+    "bm25_rank",
+    "recalled_by_bm25",
     "global_popularity_score",
     "recent_popularity_score",
     "category_popularity_score",
@@ -72,6 +87,9 @@ FEATURE_COLUMNS = [
     "entity_embedding_score",
     "entity_embedding_rank",
     "recalled_by_entity_embedding",
+    "sentence_embedding_score",
+    "sentence_embedding_rank",
+    "recalled_by_sentence_embedding",
     "recalled_by_tfidf",
     "recalled_by_num_sources",
     "recall_source_overlap_count",
@@ -104,23 +122,35 @@ FEATURE_COLUMNS = [
 
 CATEGORICAL_COLUMNS = ["category", "subcategory"]
 
-RECALL_SOURCES = ["tfidf", "popularity", "category", "itemcf", "entity_embedding"]
+RECALL_SOURCES = [
+    "tfidf",
+    "bm25",
+    "popularity",
+    "category",
+    "itemcf",
+    "entity_embedding",
+    "sentence_embedding",
+]
 
 HYBRID_RECALL_FEATURE_COLUMNS = [
     "recalled_by_tfidf",
+    "recalled_by_bm25",
     "recalled_by_popularity",
     "recalled_by_category",
     "recalled_by_itemcf",
     "recalled_by_entity_embedding",
+    "recalled_by_sentence_embedding",
     "recalled_by_num_sources",
     "recall_source_overlap_count",
     "max_recall_score",
     "mean_recall_score",
     "tfidf_rank",
+    "bm25_rank",
     "popularity_rank",
     "category_rank",
     "itemcf_rank",
     "entity_embedding_rank",
+    "sentence_embedding_rank",
     "best_recall_rank",
     "mean_recall_rank",
 ]
@@ -134,10 +164,12 @@ class PipelineConfig:
     top_k: int = 10
     recall_top_k: int | None = None
     use_tfidf_score: bool = False
+    use_bm25_score: bool = False
     use_popularity_score: bool = False
     use_category_score: bool = False
     use_itemcf_score: bool = False
     use_entity_embedding_score: bool = False
+    use_sentence_embedding_score: bool = False
     use_hybrid_recall_features: bool = False
     hybrid_recall_top_n: int | None = None
     hybrid_recall_sources: list[str] = field(
@@ -146,6 +178,7 @@ class PipelineConfig:
     hybrid_include_zero_score: bool = False
     seed: int = SEED
     tfidf_params: dict = field(default_factory=lambda: dict(TFIDF_PARAMS))
+    bm25_params: dict = field(default_factory=lambda: dict(BM25_PARAMS))
     lgbm_params: dict = field(default_factory=lambda: dict(LIGHTGBM_BEST_PARAMS))
     lgbm_search_space: dict = field(default_factory=lambda: dict(LGBM_SEARCH_SPACE))
     feature_columns: list[str] = field(default_factory=lambda: list(FEATURE_COLUMNS))
@@ -187,6 +220,13 @@ class PipelineConfig:
     def valid_entity_embedding_path(self) -> Path:
         return self.project_root / "data/valid/entity_embedding.vec"
 
+    @property
+    def sentence_embedding_path(self) -> Path:
+        return (
+            self.cache_dir
+            / "sentence_embeddings_sentence-transformers_all-MiniLM-L6-v2.npz"
+        )
+
     def __post_init__(self) -> None:
         unknown_sources = set(self.hybrid_recall_sources) - set(RECALL_SOURCES)
         if unknown_sources:
@@ -195,6 +235,15 @@ class PipelineConfig:
         if not self.use_tfidf_score:
             self.feature_columns = [
                 col for col in self.feature_columns if col != "tfidf_score"
+            ]
+        if not self.use_bm25_score:
+            bm25_cols = {
+                "bm25_score",
+                "bm25_rank",
+                "recalled_by_bm25",
+            }
+            self.feature_columns = [
+                col for col in self.feature_columns if col not in bm25_cols
             ]
         if not self.use_popularity_score:
             popularity_cols = {
@@ -234,6 +283,15 @@ class PipelineConfig:
             }
             self.feature_columns = [
                 col for col in self.feature_columns if col not in entity_embedding_cols
+            ]
+        if not self.use_sentence_embedding_score:
+            sentence_embedding_cols = {
+                "sentence_embedding_score",
+                "sentence_embedding_rank",
+                "recalled_by_sentence_embedding",
+            }
+            self.feature_columns = [
+                col for col in self.feature_columns if col not in sentence_embedding_cols
             ]
         if self.use_hybrid_recall_features:
             for col in HYBRID_RECALL_FEATURE_COLUMNS:

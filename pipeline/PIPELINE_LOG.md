@@ -19,6 +19,246 @@ recall module 内部可以由多个 recall channels 组成。不同 recall 方�
 - Offline training / evaluation: 使用 multi-recall signals 作为 ranking features，在完整 candidate set 上评估。
 - Online / backend deployment: 使用 multi-recall topN 生成 candidate pool，然后用 LightGBM reranking做展示。
 
+## 2026-05-11 - Sentence Embedding Hybrid Recall Full Evaluation
+
+本轮把 lexical recall 中的 TF-IDF 替换成 neural sentence embedding recall，并重新测试新的三路 hybrid recall：
+
+```text
+SentenceEmbedding + EntityEmbedding + Category
+```
+
+SentenceEmbedding 使用 `sentence-transformers/all-MiniLM-L6-v2` 生成 news title / abstract embedding。每个 user impression 的 history embedding 取均值，然后和 candidate news embedding 做 cosine similarity，得到 `sentence_embedding_score` 和 `sentence_embedding_rank`。
+
+### Files / CLI Updated
+
+新增：
+
+```text
+pipeline/generate_sentence_embeddings.py
+pipeline/recall_sentence_embedding.py
+```
+
+新增 / 扩展 CLI：
+
+```text
+--hybrid-recalls sentence_embedding entity_embedding category
+--use-sentence-embedding-score
+```
+
+说明：
+
+```text
+generate_sentence_embeddings.py:
+  在 Colab / GPU 环境下预先生成 sentence embedding cache。
+
+recall_sentence_embedding.py:
+  读取 embedding cache，计算 user-history-to-candidate 的 sentence embedding recall score。
+
+--hybrid-recalls sentence_embedding entity_embedding category:
+  用 SentenceEmbedding 替换 TF-IDF，和 EntityEmbedding / Category 组成三路 hybrid recall。
+
+--use-sentence-embedding-score:
+  不做 cutoff，只把 sentence embedding score 作为 LightGBM ranking feature。
+```
+
+### Why Replace TF-IDF
+
+替换 TF-IDF 的原因是：SentenceEmbedding 和 TF-IDF 都是 content / text similarity recall，功能位最接近；而 EntityEmbedding 和 Category 捕捉的是不同信号，更适合作为互补 recall source 保留。
+
+50k recall-stage single-source evaluation：
+
+| Recall Source | topN | Hit Rate | Positive Keep Rate | Avg Candidates |
+|---|---:|---:|---:|---:|
+| TF-IDF | 100 | 86.70% | 84.88% | 29.82 |
+| EntityEmbedding | 100 | 85.90% | 80.53% | 26.79 |
+| Category | 100 | 78.86% | 76.13% | 23.67 |
+| SentenceEmbedding | 20 | 82.42% | 69.73% | 14.63 |
+| SentenceEmbedding | 50 | **91.99%** | **86.34%** | 25.00 |
+| SentenceEmbedding | 100 | **94.25%** | **92.69%** | 31.76 |
+
+Takeaway:
+
+```text
+SentenceEmbedding single recall 在 top50/top100 下明显超过 TF-IDF top100 的 hit_rate 和 positive_keep_rate。
+因此这一轮不是把 EntityEmbedding / Category 换掉，而是用 SentenceEmbedding 替换原来的 TF-IDF lexical recall。
+尝试过用 BM25 替换 TF-IDF ，但效果几乎和 TF-IDF 表现无异，所以尝试Sentence Embedding
+```
+
+### Full Hybrid Filtering Results
+
+```text
+Old 3-way Recall: TF-IDF + Entity + Category
+New 3-way Recall: Sentence Embedding + Entity + Category
+```
+
+Full validation results（**加粗适用于同一个union级别的对比**）：
+
+| Run | Candidate Reduction | Positive Keep Rate | Hit Rate | AUC | MRR | nDCG@5 | nDCG@10 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Old 3-way Recall union@20 | 40.88% | 81.32% | 89.97% | 0.5964 | 0.3328 | 0.3117 | 0.3705 |
+| New 3-way Recall union@20 | **41.20%** | **82.34%** | **90.77%** | **0.5998** | 0.3296 | 0.3092 | 0.3686 |
+| Old 3-way Recall union@50 | **16.84%** | 92.35% | 94.93% | 0.6219 | 0.3394 | 0.3209 | 0.3828 |
+| New 3-way Recall union@50 | 16.62% | **93.23%** | **95.62%** | **0.6418** | **0.3462** | **0.3276** | **0.3897** |
+| Old 3-way Recall union@100 | **7.61%** | 95.21% | 95.72% | 0.6298 | 0.3433 | 0.3261 | 0.3860 |
+| New 3-way Recall union@100 | 6.65% | **95.93%** | **96.41%** | **0.6370** | **0.3459** | **0.3294** | **0.3888** |
+
+当前最佳 backend candidate generation / filtering 结果：
+
+```text
+SentenceEmbedding + EntityEmbedding + Category union@50
+
+Metrics:
+  AUC = 0.6418
+  MRR = 0.3462
+  nDCG@5 = 0.3276
+  nDCG@10 = 0.3897
+
+Filtering:
+  candidate_reduction = 16.62%
+  positive_keep_rate = 93.23%
+  hit_rate = 95.62%
+```
+
+旧版中更平衡的 backend filtering 设置是 `TF-IDF + EntityEmbedding + Category union@50`。保持 union@50 不变，只把 TF-IDF 替换成 SentenceEmbedding 后，各项 ranking metrics 都明显提升：
+
+```text
+AUC:     0.6219 -> 0.6418 (↑)
+MRR:     0.3394 -> 0.3462 (↑)
+nDCG@5:  0.3209 -> 0.3276 (↑)
+nDCG@10: 0.3828 -> 0.3897 (↑)
+```
+
+新的 SentenceEmbedding 三路 hybrid recall 在不同 topN 下的取舍如下：
+
+```text
+union@20:
+  candidate_reduction = 41.20%
+  positive_keep_rate = 82.34%
+  AUC = 0.5998
+  过滤力度最强，但丢失了较多 clicked items。
+
+union@50:
+  candidate_reduction = 16.62%
+  positive_keep_rate = 93.23%
+  AUC = 0.6418
+  这是目前最平衡的 backend candidate generation 设置。
+
+union@100:
+  candidate_reduction = 6.65%
+  positive_keep_rate = 95.93%
+  AUC = 0.6370
+  保留的 clicked items 最多，但过滤效果较弱，并且 AUC 低于 union@50。
+```
+
+### Full Candidate Hybrid Feature Results
+
+本轮也测试了新的三路 recall 不做 filtering，只作为 full-candidate ranking features：
+
+```text
+Full candidate set
++ SentenceEmbedding / EntityEmbedding / Category hybrid recall features
++ LightGBM
+```
+
+这条线的目的不是 backend filtering，而是 offline ranking metrics improvement。所有 valid candidates 都保留：
+
+```text
+candidates_before = 2,740,998
+candidates_after = 2,740,998
+candidate_keep_rate = 100%
+```
+
+Full validation results：
+
+| Run | Description | AUC | MRR | nDCG@5 | nDCG@10 |
+|---|---|---:|---:|---:|---:|
+| Pipeline LightGBM baseline | full candidate, no tune | 0.6408 | 0.3539 | 0.3366 | 0.3962 |
+| Pipeline LightGBM baseline + tune | previous best full-candidate AUC | **0.6462** | 0.3482 | 0.3323 | 0.3925 |
+| Old TF-IDF + Entity + Category hybrid features | previous hybrid-feature baseline | 0.6373 | 0.3523 | 0.3365 | 0.3943 |
+| Old TF-IDF + Entity + Category hybrid features + tune | previous tuned hybrid-feature result | 0.6376 | 0.3518 | 0.3361 | 0.3940 |
+| New Sentence + Entity + Category hybrid features | no tune | 0.6351 | 0.3544 | 0.3386 | 0.3962 |
+| New Sentence + Entity + Category hybrid features + tune | best top-ranking result | 0.6446 | **0.3601** | **0.3432** | **0.4012** |
+
+该设置下旧版最佳模型：
+
+```text
+Before SentenceEmbedding, the best full-candidate AUC result:
+
+Metrics:
+  AUC = 0.6462 (Pipeline LightGBM baseline + tune)
+  MRR = 0.3518 (old 3-way recall with tune)
+  nDCG@5 = 0.3361 (old 3-way recall with tune)
+  nDCG@10 = 0.3940 (old 3-way recall with tune)
+```
+
+New best top-ranking result:
+
+```text
+SentenceEmbedding + EntityEmbedding + Category hybrid features + tune
+
+Metrics:
+  AUC = 0.6446
+  MRR = 0.3601
+  nDCG@5 = 0.3432
+  nDCG@10 = 0.4012
+
+Compared with the previous tuned LightGBM baseline:
+  AUC is slightly lower: 0.6462 -> 0.6446 (↓)
+  MRR is higher:         0.3482 -> 0.3601 (↑)
+  nDCG@5 is higher:      0.3323 -> 0.3432 (↑)
+  nDCG@10 is higher:     0.3925 -> 0.4012 (↑)
+
+Compared with the old TF-IDF + EntityEmbedding + Category hybrid features + tune:
+  AUC improves:     0.6376 -> 0.6446 (↑)
+  MRR improves:     0.3518 -> 0.3601 (↑)
+  nDCG@5 improves:  0.3361 -> 0.3432 (↑)
+  nDCG@10 improves: 0.3940 -> 0.4012 (↑)
+```
+
+### Current Takeaway
+
+当前最重要结论：
+
+```text
+1. Backend filtering / candidate generation:
+   SentenceEmbedding + EntityEmbedding + Category union@50
+   是目前最好的 backend candidate generation 设置。
+
+   它在 full validation 上达到:
+     AUC = 0.6418
+     candidate_reduction = 16.62%
+     positive_keep_rate = 93.23%
+     hit_rate = 95.62%
+
+   相比旧的 TF-IDF + EntityEmbedding + Category union@50，
+   ranking metrics 全面提升。
+
+2. Offline full-candidate ranking:
+   SentenceEmbedding + EntityEmbedding + Category hybrid features + tune
+   是目前最好的 top-ranking result。
+
+   它在 full candidate set 上达到:
+     AUC = 0.6446
+     MRR = 0.3601
+     nDCG@5 = 0.3432
+     nDCG@10 = 0.4012
+
+   它没有超过 tuned LightGBM baseline 的 AUC = 0.6462，
+   但明显超过了该 baseline 的 MRR / nDCG@5 / nDCG@10。
+
+3. Overall:
+   SentenceEmbedding 不仅是比 TF-IDF 更强的 recall replacement，
+   也能作为 hybrid recall interaction features 帮助 LightGBM 提升 top-ranking quality。
+```
+
+后续建议：
+
+```text
+1. 如果继续做模型升级，下一步可以尝试更贴近 recommendation objective 的 neural recall，
+   例如 two-tower / dual encoder。
+2. 尝试继续优化 ranking 模型：LightGBM
+```
+
 ## 2026-05-05 - Hybrid Recall Filtering vs Multi-recall Features
 
 本轮主要区分了 multi-recall 的两种接法：
@@ -188,7 +428,6 @@ mean_recall_score
 2. backend / inference 时，使用 multi-recall topN candidate generation + LightGBM rerank；
    当前优先展示 union@50 的平衡版本，也可同时报告 union@100 的最高 ranking metrics。
 3. 后续继续尝试更强 recall source，例如 BM25、sentence embedding、two-tower / dual encoder。
-4. 如果继续优化 ranking，可尝试更贴近 ranking 的 tuning objective 或更多 feature ablation。
 ```
 
 ## 2026-05-04 - Recall-stage Evaluation
@@ -445,8 +684,6 @@ multi-recall complementarity
 
 也就是先判断每个 recall 在 candidate generation 阶段能不能抓到 clicked item，再决定是否放进最终 hybrid recall module。
 
-还有接上一轮依旧：继续优化 LightGBM ranking model。
-
 ## 2026-05-02 - TF-IDF Recall + LightGBM Pipeline Baseline
 
 现阶段先使用 TF-IDF 作为第一路 recall source，因为它是初期 recall baseline 里表现最好的方法。
@@ -548,8 +785,3 @@ max: 295
    - `popularity_score`
    - `is_from_<recall>_topK`
    - `recall_source_count`
-
-3. 继续优化 LightGBM ranking model：
-   - 扩展 LightGBM search space
-   - 尝试更多 ranking features
-   - 做 feature ablation 判断每个 feature 是否有效

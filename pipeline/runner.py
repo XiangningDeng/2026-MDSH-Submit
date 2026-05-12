@@ -11,6 +11,7 @@ from pipeline.data_prepare import load_train_valid_data
 from pipeline.feature_builder import RankingFeatureBuilder
 from pipeline.metrics import evaluate_predictions, write_metrics
 from pipeline.rank_lgbm import LightGBMRanker, coordinate_search
+from pipeline.recall_bm25 import BM25RecallScorer
 from pipeline.recall_category import CategoryRecallScorer
 from pipeline.recall_entity_embedding import EntityEmbeddingRecallScorer
 from pipeline.recall_hybrid import (
@@ -20,6 +21,7 @@ from pipeline.recall_hybrid import (
 )
 from pipeline.recall_itemcf import ItemCFRecallScorer
 from pipeline.recall_popularity import PopularityRecallScorer
+from pipeline.recall_sentence_embedding import SentenceEmbeddingRecallScorer
 from pipeline.recall_tfidf import TfidfRecallScorer
 
 
@@ -211,6 +213,28 @@ class RecommendationPipeline:
             valid_tfidf_scores = None
         section_started_at = mark("tfidf_recall", section_started_at)
 
+        if self.config.use_bm25_score or "bm25" in hybrid_sources:
+            bm25 = BM25RecallScorer(self.config.bm25_params).fit(news)
+            self.config.cache_dir.mkdir(parents=True, exist_ok=True)
+            train_bm25_scores = self._load_or_score_recall(
+                bm25,
+                train_candidates,
+                self._recall_score_cache_path("train", "bm25", max_train_impressions),
+            )
+            valid_bm25_scores = self._load_or_score_recall(
+                bm25,
+                valid_candidates,
+                self._recall_score_cache_path("valid", "bm25", max_valid_impressions),
+            )
+            valid_bm25_scores.to_csv(
+                self.config.output_dir / "bm25_recall_scores.csv",
+                index=False,
+            )
+        else:
+            train_bm25_scores = None
+            valid_bm25_scores = None
+        section_started_at = mark("bm25_recall", section_started_at)
+
         full_valid_candidates = valid_candidates
         if self.config.recall_top_k is not None and self.config.recall_top_k > 0:
             train_candidates, train_tfidf_scores, train_recall_stats = self._apply_recall_top_k(
@@ -313,19 +337,55 @@ class RecommendationPipeline:
             valid_entity_embedding_scores = None
         section_started_at = mark("entity_embedding_recall", section_started_at)
 
+        if self.config.use_sentence_embedding_score or "sentence_embedding" in hybrid_sources:
+            sentence_embedding = SentenceEmbeddingRecallScorer(
+                self.config.sentence_embedding_path
+            ).fit(news)
+            self.config.cache_dir.mkdir(parents=True, exist_ok=True)
+            train_sentence_embedding_scores = self._load_or_score_recall(
+                sentence_embedding,
+                train_candidates,
+                self._recall_score_cache_path(
+                    "train",
+                    "sentence_embedding",
+                    max_train_impressions,
+                ),
+            )
+            valid_sentence_embedding_scores = self._load_or_score_recall(
+                sentence_embedding,
+                valid_candidates,
+                self._recall_score_cache_path(
+                    "valid",
+                    "sentence_embedding",
+                    max_valid_impressions,
+                ),
+            )
+            valid_sentence_embedding_scores.to_csv(
+                self.config.output_dir / "sentence_embedding_recall_scores.csv",
+                index=False,
+            )
+        else:
+            train_sentence_embedding_scores = None
+            valid_sentence_embedding_scores = None
+        section_started_at = mark("sentence_embedding_recall", section_started_at)
+
         train_scores_by_recall = {
             "tfidf": train_tfidf_scores,
+            "bm25": train_bm25_scores,
             "popularity": train_popularity_scores,
             "category": train_category_scores,
             "itemcf": train_itemcf_scores,
             "entity_embedding": train_entity_embedding_scores,
+            "sentence_embedding": train_sentence_embedding_scores,
         }
         valid_scores_by_recall = {
             "tfidf": valid_tfidf_scores,
+            "bm25": valid_bm25_scores,
             "popularity": valid_popularity_scores,
             "category": valid_category_scores,
             "itemcf": valid_itemcf_scores,
             "entity_embedding": valid_entity_embedding_scores,
+            "sentence_embedding": valid_sentence_embedding_scores,
         }
         train_selected_scores = {
             source: train_scores_by_recall[source]
@@ -365,6 +425,8 @@ class RecommendationPipeline:
             )
             train_tfidf_scores = filter_scores_to_candidates(train_tfidf_scores, train_candidates)
             valid_tfidf_scores = filter_scores_to_candidates(valid_tfidf_scores, valid_candidates)
+            train_bm25_scores = filter_scores_to_candidates(train_bm25_scores, train_candidates)
+            valid_bm25_scores = filter_scores_to_candidates(valid_bm25_scores, valid_candidates)
             train_popularity_scores = filter_scores_to_candidates(train_popularity_scores, train_candidates)
             valid_popularity_scores = filter_scores_to_candidates(valid_popularity_scores, valid_candidates)
             train_category_scores = filter_scores_to_candidates(train_category_scores, train_candidates)
@@ -377,6 +439,14 @@ class RecommendationPipeline:
             )
             valid_entity_embedding_scores = filter_scores_to_candidates(
                 valid_entity_embedding_scores,
+                valid_candidates,
+            )
+            train_sentence_embedding_scores = filter_scores_to_candidates(
+                train_sentence_embedding_scores,
+                train_candidates,
+            )
+            valid_sentence_embedding_scores = filter_scores_to_candidates(
+                valid_sentence_embedding_scores,
                 valid_candidates,
             )
             train_hybrid_recall_features = filter_scores_to_candidates(
@@ -396,19 +466,23 @@ class RecommendationPipeline:
         train_features = feature_builder.transform(
             train_candidates,
             train_tfidf_scores if self.config.use_tfidf_score else None,
+            train_bm25_scores if self.config.use_bm25_score else None,
             train_popularity_scores if self.config.use_popularity_score else None,
             train_category_scores if self.config.use_category_score else None,
             train_itemcf_scores if self.config.use_itemcf_score else None,
             train_entity_embedding_scores if self.config.use_entity_embedding_score else None,
+            train_sentence_embedding_scores if self.config.use_sentence_embedding_score else None,
             train_hybrid_recall_features if self.config.use_hybrid_recall_features else None,
         )
         valid_features = feature_builder.transform(
             valid_candidates,
             valid_tfidf_scores if self.config.use_tfidf_score else None,
+            valid_bm25_scores if self.config.use_bm25_score else None,
             valid_popularity_scores if self.config.use_popularity_score else None,
             valid_category_scores if self.config.use_category_score else None,
             valid_itemcf_scores if self.config.use_itemcf_score else None,
             valid_entity_embedding_scores if self.config.use_entity_embedding_score else None,
+            valid_sentence_embedding_scores if self.config.use_sentence_embedding_score else None,
             valid_hybrid_recall_features if self.config.use_hybrid_recall_features else None,
         )
         section_started_at = mark("feature_build", section_started_at)
@@ -484,10 +558,12 @@ class RecommendationPipeline:
             "model_path": str(self.config.model_path),
             "recall": {
                 "use_tfidf_score": self.config.use_tfidf_score,
+                "use_bm25_score": self.config.use_bm25_score,
                 "use_popularity_score": self.config.use_popularity_score,
                 "use_category_score": self.config.use_category_score,
                 "use_itemcf_score": self.config.use_itemcf_score,
                 "use_entity_embedding_score": self.config.use_entity_embedding_score,
+                "use_sentence_embedding_score": self.config.use_sentence_embedding_score,
                 "use_hybrid_recall_features": self.config.use_hybrid_recall_features,
                 "hybrid": {
                     "train": train_hybrid_stats,
