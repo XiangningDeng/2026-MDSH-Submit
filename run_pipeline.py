@@ -101,6 +101,12 @@ def main() -> None:
         action="store_true",
         help="Run the same coordinate-search style tuning used in the LightGBM baseline notebook.",
     )
+    parser.add_argument(
+        "--ranker",
+        choices=["binary", "lambdarank"],
+        default="binary",
+        help="LightGBM training objective: binary classifier baseline or LambdaRank ranker.",
+    )
     args = parser.parse_args()
 
     from pipeline.config import PipelineConfig
@@ -123,6 +129,7 @@ def main() -> None:
         use_entity_embedding_score=args.use_entity_embedding_score,
         use_sentence_embedding_score=args.use_sentence_embedding_score,
         use_hybrid_recall_features=args.use_hybrid_recall_features,
+        ranker=args.ranker,
     )
     result = RecommendationPipeline(config).run(
         mode=args.mode,

@@ -19,6 +19,186 @@ recall module 内部可以由多个 recall channels 组成。不同 recall 方�
 - Offline training / evaluation: 使用 multi-recall signals 作为 ranking features，在完整 candidate set 上评估。
 - Online / backend deployment: 使用 multi-recall topN 生成 candidate pool，然后用 LightGBM reranking做展示。
 
+## 2026-05-12 - End-to-end Backend Pipeline and LambdaRank Trial
+
+本轮主要把前面分开测试的 recall filtering 和 ranking features 串成更接近工业界 two-stage recommendation system 的完整 pipeline
+
+### Current Pipeline
+
+当前阶段性最终 pipeline：
+
+```text
+Recall:
+  SentenceEmbedding + EntityEmbedding + Category union@50
+  -> candidate pool
+  -> recall score / rank / source signals
+
+Feature generation:
+  base features
+  + hybrid recall features
+
+Ranking:
+  tuned binary LightGBM
+  -> final ranked list
+```
+
+对应 CLI：
+
+```bash
+Microsoft/bin/python run_pipeline.py \
+  --mode eval \
+  --output-dir outputs/hybrid_recall_sentence_union50_features_full_tune \
+  --cache-dir outputs/pipeline_cache \
+  --hybrid-recall-top-n 50 \
+  --hybrid-recalls sentence_embedding entity_embedding category \
+  --use-hybrid-recall-features \
+  --tune-lgbm
+```
+
+这个实验和前面的 full-candidate feature experiment 不同。这里先做 backend candidate filtering，再把 recall-derived features 交给 ranking model；因此它更像真实线上 pipeline，而不是只评估 ranking upper bound。
+
+### End-to-end Backend Pipeline Result
+
+对比对象是之前最好的 backend filtering setting：
+
+```text
+SentenceEmbedding + EntityEmbedding + Category union@50
+-> base features
+-> binary LightGBM
+```
+
+新的完整 pipeline 是：
+
+```text
+SentenceEmbedding + EntityEmbedding + Category union@50
+-> base features + hybrid recall features
+-> tuned binary LightGBM
+```
+
+对比涉及增加 hybrid recall features 和 tune ranking 模型，这两个模块。
+
+Full validation results：
+
+| Run | Candidate Reduction | Positive Keep Rate | Hit Rate | AUC | MRR | nDCG@5 | nDCG@10 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| union@50 + base features + binary LightGBM | 16.62% | 93.23% | 95.62% | 0.6418 | 0.3462 | 0.3276 | 0.3897 |
+| union@50 + hybrid features + tuned binary LightGBM | **16.62%** | **93.23%** | **95.62%** | **0.6439** | **0.3559** | **0.3404** | **0.3994** |
+
+相较于之前 backend filtering 结果的提升：
+
+```text
+AUC:     0.6418 -> 0.6439 (↑)
+MRR:     0.3462 -> 0.3559 (↑)
+nDCG@5:  0.3276 -> 0.3404 (↑)
+nDCG@10: 0.3897 -> 0.3994 (↑)
+```
+
+Filtering 相关指标保持不变，因为 candidate pool 没有变化：
+
+```text
+candidates_before = 2,740,998
+candidates_after = 2,285,483
+candidate_reduction = 16.62%
+positive_keep_rate = 93.23%
+hit_rate = 95.62%
+avg_candidates_per_impression = 32.22
+```
+
+Feature importance 显示，reranker 确实在使用 recall-derived features：
+
+```text
+mean_recall_rank                #2
+best_recall_rank                #3
+sentence_embedding_rank         #4
+recalled_by_sentence_embedding  #9
+recalled_by_num_sources         #14
+```
+
+Takeaway:
+
+```text
+1. 在相同 union@50 candidate pool 下，加入 hybrid recall features 并 tune binary LightGBM 后，ranking metrics 全面提升。
+
+2. 这说明 recall 不仅能用于 candidate generation，也能把 source / score / rank / overlap signals 作为 features 传给 ranking model。
+```
+
+### Comparison with Full-candidate Upper Bound
+
+当前 full-candidate ranking upper bound 仍然是：
+
+```text
+Full candidate set
++ SentenceEmbedding / EntityEmbedding / Category hybrid features
++ tuned binary LightGBM
+```
+
+| Run | Filtering | AUC | MRR | nDCG@5 | nDCG@10 |
+|---|---|---:|---:|---:|---:|
+| full candidate + hybrid features + tuned binary LightGBM | no | **0.6446** | **0.3601** | **0.3432** | **0.4012** |
+| union@50 + hybrid features + tuned binary LightGBM | yes | 0.6439 | 0.3559 | 0.3404 | 0.3994 |
+
+Takeaway:
+
+```text
+完整 backend pipeline 在减少 16.62% candidates 的同时，ranking quality 已经非常接近 full-candidate tuned model。
+```
+
+### LambdaRank Trial
+
+本轮也尝试把 ranking objective 从 binary classification 换成 LightGBMRanker / LambdaRank：
+
+```text
+--ranker lambdarank
+```
+
+LambdaRank 会按 impression_id 构造 group，并在训练前自动过滤无效 group：
+
+```text
+drop group size < 2
+drop positive_count == 0
+drop negative_count == 0
+```
+
+主要实验结果：
+
+| Run | AUC | MRR | nDCG@5 | nDCG@10 |
+|---|---:|---:|---:|---:|
+| LambdaRank full candidate + hybrid features | 0.6148 | 0.3474 | 0.3287 | 0.3849 |
+| LambdaRank union@50 + base features | 0.6003 | 0.3340 | 0.3136 | 0.3696 |
+| LambdaRank union@50 + hybrid features | 0.6155 | 0.3440 | 0.3255 | 0.3824 |
+| tuned binary LightGBM full candidate + hybrid features | **0.6446** | **0.3601** | **0.3432** | **0.4012** |
+| tuned binary LightGBM union@50 + hybrid features | 0.6439 | 0.3559 | 0.3404 | 0.3994 |
+
+Takeaway:
+
+```text
+1. 当前第一版 LambdaRank 没有超过 tuned binary LightGBM。即使加入 hybrid recall features，LambdaRank 的 ranking metrics 仍然明显低于 binary LightGBM。
+
+2. 因此当前 pipeline 暂时继续使用 tuned binary LightGBM 作为 ranking model。LambdaRank 可以作为后续探索方向，但不是当前最佳方案。
+```
+
+### Current Takeaway
+
+当前阶段性最终结论：
+
+```text
+1. 最像 production 的 end-to-end backend pipeline:
+   SentenceEmbedding + EntityEmbedding + Category union@50
+   + hybrid recall features
+   + tuned binary LightGBM
+
+2. 该 pipeline 在 full validation 上达到:
+   candidate_reduction = 16.62%
+   positive_keep_rate = 93.23%
+   hit_rate = 95.62%
+   AUC = 0.6439
+   MRR = 0.3559
+   nDCG@5 = 0.3404
+   nDCG@10 = 0.3994
+
+3. LambdaRank 已尝试，但当前不如 tuned binary LightGBM。
+```
+
 ## 2026-05-11 - Sentence Embedding Hybrid Recall Full Evaluation
 
 本轮把 lexical recall 中的 TF-IDF 替换成 neural sentence embedding recall，并重新测试新的三路 hybrid recall：
@@ -84,14 +264,14 @@ SentenceEmbedding single recall 在 top50/top100 下明显超过 TF-IDF top100 �
 尝试过用 BM25 替换 TF-IDF ，但效果几乎和 TF-IDF 表现无异，所以尝试Sentence Embedding
 ```
 
-### Full Hybrid Filtering Results
+### Backend Hybrid Filtering Results
 
 ```text
 Old 3-way Recall: TF-IDF + Entity + Category
 New 3-way Recall: Sentence Embedding + Entity + Category
 ```
 
-Full validation results（**加粗适用于同一个union级别的对比**）：
+Validation results（**加粗适用于同一个union级别的对比**）：
 
 | Run | Candidate Reduction | Positive Keep Rate | Hit Rate | AUC | MRR | nDCG@5 | nDCG@10 |
 |---|---:|---:|---:|---:|---:|---:|---:|

@@ -487,7 +487,11 @@ class RecommendationPipeline:
         )
         section_started_at = mark("feature_build", section_started_at)
 
-        lgbm_params = dict(self.config.lgbm_params)
+        lgbm_params = (
+            dict(self.config.lambdarank_params)
+            if self.config.ranker == "lambdarank"
+            else dict(self.config.lgbm_params)
+        )
         if tune_lgbm:
             lgbm_params, search_results = coordinate_search(
                 lgbm_params,
@@ -496,6 +500,7 @@ class RecommendationPipeline:
                 valid_features,
                 self.config.feature_columns,
                 self.config.categorical_columns,
+                self.config.ranker,
             )
             search_results.to_csv(self.config.output_dir / "lgbm_search_results.csv", index=False)
             section_started_at = mark("lgbm_tuning", section_started_at)
@@ -504,6 +509,7 @@ class RecommendationPipeline:
             lgbm_params,
             self.config.feature_columns,
             self.config.categorical_columns,
+            self.config.ranker,
         ).train(train_features, valid_features, verbose_eval=True)
         section_started_at = mark("lgbm_train", section_started_at)
 
@@ -556,6 +562,10 @@ class RecommendationPipeline:
             "prediction_path": str(self.config.output_dir / "prediction.txt"),
             "top_k_path": str(self.config.output_dir / f"top{self.config.top_k}_recommendations.csv"),
             "model_path": str(self.config.model_path),
+            "ranker": {
+                "type": self.config.ranker,
+                "training_summary": ranker.training_summary,
+            },
             "recall": {
                 "use_tfidf_score": self.config.use_tfidf_score,
                 "use_bm25_score": self.config.use_bm25_score,

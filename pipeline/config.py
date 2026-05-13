@@ -58,6 +58,24 @@ LIGHTGBM_BEST_PARAMS = {
     "verbosity": -1,
 }
 
+LIGHTGBM_LAMBDARANK_PARAMS = {
+    "objective": "lambdarank",
+    "metric": "ndcg",
+    "n_estimators": 400,
+    "learning_rate": 0.03,
+    "num_leaves": 31,
+    "min_child_samples": 50,
+    "feature_fraction": 0.8,
+    "bagging_fraction": 0.7,
+    "max_depth": -1,
+    "reg_alpha": 0.1,
+    "reg_lambda": 1.0,
+    "random_state": SEED,
+    "n_jobs": -1,
+    "bagging_freq": 1,
+    "verbosity": -1,
+}
+
 LGBM_SEARCH_SPACE = {
     "num_leaves": [31, 63, 127],
     "min_child_samples": [20, 50, 100],
@@ -176,10 +194,14 @@ class PipelineConfig:
         default_factory=lambda: ["tfidf", "entity_embedding", "category"]
     )
     hybrid_include_zero_score: bool = False
+    ranker: str = "binary"
     seed: int = SEED
     tfidf_params: dict = field(default_factory=lambda: dict(TFIDF_PARAMS))
     bm25_params: dict = field(default_factory=lambda: dict(BM25_PARAMS))
     lgbm_params: dict = field(default_factory=lambda: dict(LIGHTGBM_BEST_PARAMS))
+    lambdarank_params: dict = field(
+        default_factory=lambda: dict(LIGHTGBM_LAMBDARANK_PARAMS)
+    )
     lgbm_search_space: dict = field(default_factory=lambda: dict(LGBM_SEARCH_SPACE))
     feature_columns: list[str] = field(default_factory=lambda: list(FEATURE_COLUMNS))
     categorical_columns: list[str] = field(default_factory=lambda: list(CATEGORICAL_COLUMNS))
@@ -228,6 +250,9 @@ class PipelineConfig:
         )
 
     def __post_init__(self) -> None:
+        if self.ranker not in {"binary", "lambdarank"}:
+            raise ValueError("ranker must be either 'binary' or 'lambdarank'.")
+
         unknown_sources = set(self.hybrid_recall_sources) - set(RECALL_SOURCES)
         if unknown_sources:
             raise ValueError(f"Unknown hybrid recall sources: {sorted(unknown_sources)}")
