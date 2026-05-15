@@ -19,7 +19,7 @@ recall module 内部可以由多个 recall channels 组成。不同 recall 方�
 - Offline training / evaluation: 使用 multi-recall signals 作为 ranking features，在完整 candidate set 上评估。
 - Online / backend deployment: 使用 multi-recall topN 生成 candidate pool，然后用 LightGBM reranking做展示。
 
-## 2026-05-12 - End-to-end Backend Pipeline and LambdaRank Trial
+## 2026-05-13 - End-to-end Backend Pipeline and LambdaRank Trial
 
 本轮主要把前面分开测试的 recall filtering 和 ranking features 串成更接近工业界 two-stage recommendation system 的完整 pipeline
 
@@ -36,6 +36,7 @@ Recall:
 Feature generation:
   base features
   + hybrid recall features
+  + raw sentence_embedding_score
 
 Ranking:
   tuned binary LightGBM
@@ -47,11 +48,12 @@ Ranking:
 ```bash
 Microsoft/bin/python run_pipeline.py \
   --mode eval \
-  --output-dir outputs/hybrid_recall_sentence_union50_features_full_tune \
+  --output-dir outputs/hybrid_recall_sentence_union50_features_sentence_score_full_tune \
   --cache-dir outputs/pipeline_cache \
   --hybrid-recall-top-n 50 \
   --hybrid-recalls sentence_embedding entity_embedding category \
   --use-hybrid-recall-features \
+  --use-sentence-embedding-score \
   --tune-lgbm
 ```
 
@@ -82,15 +84,25 @@ Full validation results：
 | Run | Candidate Reduction | Positive Keep Rate | Hit Rate | AUC | MRR | nDCG@5 | nDCG@10 |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | union@50 + base features + binary LightGBM | 16.62% | 93.23% | 95.62% | 0.6418 | 0.3462 | 0.3276 | 0.3897 |
-| union@50 + hybrid features + tuned binary LightGBM | **16.62%** | **93.23%** | **95.62%** | **0.6439** | **0.3559** | **0.3404** | **0.3994** |
+| union@50 + hybrid features + tuned binary LightGBM | 16.62% | 93.23% | 95.62% | 0.6439 | 0.3559 | 0.3404 | 0.3994 |
+| union@50 + hybrid features + sentence score + tuned binary LightGBM | 16.62% | 93.23% | 95.62% | **0.6555** | **0.3652** | **0.3507** | **0.4089** |
 
-相较于之前 backend filtering 结果的提升：
+相较于之前 backend filtering (3-way recall union@50) 结果的提升：
 
 ```text
-AUC:     0.6418 -> 0.6439 (↑)
-MRR:     0.3462 -> 0.3559 (↑)
-nDCG@5:  0.3276 -> 0.3404 (↑)
-nDCG@10: 0.3897 -> 0.3994 (↑)
+AUC:     0.6418 -> 0.6555 (↑)
+MRR:     0.3462 -> 0.3652 (↑)
+nDCG@5:  0.3276 -> 0.3507 (↑)
+nDCG@10: 0.3897 -> 0.4089 (↑)
+```
+
+相较于上一版 `union@50 + hybrid features + tuned binary LightGBM` 的提升：
+
+```text
+AUC:     0.6439 -> 0.6555 (↑)
+MRR:     0.3559 -> 0.3652 (↑)
+nDCG@5:  0.3404 -> 0.3507 (↑)
+nDCG@10: 0.3994 -> 0.4089 (↑)
 ```
 
 Filtering 相关指标保持不变，因为 candidate pool 没有变化：
@@ -107,19 +119,24 @@ avg_candidates_per_impression = 32.22
 Feature importance 显示，reranker 确实在使用 recall-derived features：
 
 ```text
-mean_recall_rank                #2
-best_recall_rank                #3
-sentence_embedding_rank         #4
-recalled_by_sentence_embedding  #9
-recalled_by_num_sources         #14
+mean_recall_rank        #1
+sentence_embedding_score #6
+sentence_embedding_rank  #7
+best_recall_rank         #8
+recalled_by_num_sources  #15
 ```
 
 Takeaway:
 
 ```text
-1. 在相同 union@50 candidate pool 下，加入 hybrid recall features 并 tune binary LightGBM 后，ranking metrics 全面提升。
+1. 在相同 union@50 candidate pool 下，加入 hybrid recall features、raw sentence_embedding_score，
+   并 tune binary LightGBM 后，ranking metrics 全面提升。
 
-2. 这说明 recall 不仅能用于 candidate generation，也能把 source / score / rank / overlap signals 作为 features 传给 ranking model。
+2. raw sentence_embedding_score 提供了额外的 continuous semantic similarity signal，
+   不只是 sentence_embedding_rank / recalled_by flag 有用。
+
+3. 这说明 recall 不仅能用于 candidate generation，
+   也能把 source / score / rank / overlap signals 作为 features 传给 ranking model。
 ```
 
 ### Comparison with Full-candidate Upper Bound
@@ -134,13 +151,14 @@ Full candidate set
 
 | Run | Filtering | AUC | MRR | nDCG@5 | nDCG@10 |
 |---|---|---:|---:|---:|---:|
-| full candidate + hybrid features + tuned binary LightGBM | no | **0.6446** | **0.3601** | **0.3432** | **0.4012** |
-| union@50 + hybrid features + tuned binary LightGBM | yes | 0.6439 | 0.3559 | 0.3404 | 0.3994 |
+| full candidate + hybrid features + tuned binary LightGBM | no | 0.6446 | 0.3601 | 0.3432 | 0.4012 |
+| union@50 + hybrid features + sentence score + tuned binary LightGBM | yes | **0.6555** | **0.3652** | **0.3507** | **0.4089** |
 
 Takeaway:
 
 ```text
-完整 backend pipeline 在减少 16.62% candidates 的同时，ranking quality 已经非常接近 full-candidate tuned model。
+加入 raw sentence_embedding_score 后，完整 backend pipeline 在减少 16.62% candidates 的同时，
+ranking metrics 已经超过之前的 full-candidate tuned model。
 ```
 
 ### LambdaRank Trial
@@ -164,15 +182,12 @@ drop negative_count == 0
 | Run | AUC | MRR | nDCG@5 | nDCG@10 |
 |---|---:|---:|---:|---:|
 | LambdaRank full candidate + hybrid features | 0.6148 | 0.3474 | 0.3287 | 0.3849 |
-| LambdaRank union@50 + base features | 0.6003 | 0.3340 | 0.3136 | 0.3696 |
-| LambdaRank union@50 + hybrid features | 0.6155 | 0.3440 | 0.3255 | 0.3824 |
 | tuned binary LightGBM full candidate + hybrid features | **0.6446** | **0.3601** | **0.3432** | **0.4012** |
-| tuned binary LightGBM union@50 + hybrid features | 0.6439 | 0.3559 | 0.3404 | 0.3994 |
 
 Takeaway:
 
 ```text
-1. 当前第一版 LambdaRank 没有超过 tuned binary LightGBM。即使加入 hybrid recall features，LambdaRank 的 ranking metrics 仍然明显低于 binary LightGBM。
+1. 当前 LambdaRank 没有超过 tuned binary LightGBM。即使后续加入 hybrid recall features，LambdaRank 的 ranking metrics 仍然明显低于 binary LightGBM。
 
 2. 因此当前 pipeline 暂时继续使用 tuned binary LightGBM 作为 ranking model。LambdaRank 可以作为后续探索方向，但不是当前最佳方案。
 ```
@@ -185,18 +200,22 @@ Takeaway:
 1. 最像 production 的 end-to-end backend pipeline:
    SentenceEmbedding + EntityEmbedding + Category union@50
    + hybrid recall features
+   + raw sentence_embedding_score
    + tuned binary LightGBM
 
 2. 该 pipeline 在 full validation 上达到:
    candidate_reduction = 16.62%
    positive_keep_rate = 93.23%
    hit_rate = 95.62%
-   AUC = 0.6439
-   MRR = 0.3559
-   nDCG@5 = 0.3404
-   nDCG@10 = 0.3994
+   AUC = 0.6555
+   MRR = 0.3652
+   nDCG@5 = 0.3507
+   nDCG@10 = 0.4089
 
-3. LambdaRank 已尝试，但当前不如 tuned binary LightGBM。
+3. raw sentence_embedding_score 是一个强 ranking signal，
+   能在 hybrid recall rank / source features 之外继续提供增量信息。
+
+4. LambdaRank 已尝试，但当前不如 tuned binary LightGBM。
 ```
 
 ## 2026-05-11 - Sentence Embedding Hybrid Recall Full Evaluation
