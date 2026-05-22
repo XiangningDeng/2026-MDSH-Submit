@@ -19,6 +19,69 @@ recall module 内部可以由多个 recall channels 组成。不同 recall 方�
 - Offline training / evaluation: 使用 multi-recall signals 作为 ranking features，在完整 candidate set 上评估。
 - Online / backend deployment: 使用 multi-recall topN 生成 candidate pool，然后用 LightGBM reranking做展示。
 
+## 2026-05-20 - Per-source Recall Quota Sweep
+
+这一步的意义是把 hybrid recall 从统一 topN 推进到 per-source quota：不同 recall channel 的质量和覆盖不同，不应该默认都给同样的候选值N。目标是在保持 production-style candidate reduction 的同时，尽量提高 metrics。
+
+### Uniform Quota Baseline
+
+先固定 `SentenceEmbedding + EntityEmbedding + Category` 三路 recall 都使用同一个 topN：
+
+| topN | Candidate Reduction | Positive Keep Rate | Hit Rate | AUC | MRR | nDCG@5 | nDCG@10 |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 20 | 41.20% | 82.34% | 90.77% | 0.6442 | 0.3658 | 0.3509 | 0.4092 |
+| 35 | 25.34% | 90.03% | 94.44% | 0.6523 | 0.3641 | 0.3502 | 0.4093 |
+| 50 | 16.62% | 93.23% | 95.62% | 0.6555 | 0.3652 | 0.3507 | 0.4089 |
+| 75 | 9.51% | 95.25% | 96.25% | 0.6555 | 0.3674 | 0.3518 | 0.4097 |
+| 100 | 6.65% | 95.93% | 96.41% | 0.6589 | 0.3641 | 0.3493 | 0.4095 |
+
+![Uniform quota trade-off](../outputs/quota_sweep_reduction_positive_keep.png)
+
+随着统一 topN 变大，candidate reduction 下降，positive keep rate 上升。`uniform@75` 的 MRR / nDCG@5 很强，但 candidate reduction 只有 9.51%，backend filtering 效率偏弱。
+
+### Per-source Quota Results
+
+在此基础上测试不同 recall channel 的独立 quota：
+
+| Quota | Candidate Reduction | Positive Keep Rate | Hit Rate | AUC | MRR | nDCG@5 | nDCG@10 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| s75/e50/c35 | 13.47% | 94.23% | 95.97% | 0.6553 | 0.3631 | 0.3489 | 0.4084 |
+| s100/e35/c35 | 10.89% | 94.97% | 96.15% | 0.6565 | 0.3620 | 0.3470 | 0.4075 |
+| s75/e35/c20 | 15.91% | 93.54% | 95.73% | 0.6571 | 0.3632 | 0.3487 | 0.4089 |
+| **s75/e50/c20** | **14.26%** | **93.96%** | **95.88%** | **0.6584** | **0.3660** | **0.3508** | **0.4104** |
+| s100/e35/c20 | 11.50% | 94.78% | 96.08% | 0.6584 | 0.3654 | 0.3503 | 0.4100 |
+| s100/e50/c20 | 10.55% | 95.01% | 96.18% | 0.6550 | 0.3626 | 0.3482 | 0.4080 |
+
+Current best production-style setting:
+
+```bash
+Microsoft/bin/python run_pipeline.py \
+  --mode eval \
+  --output-dir outputs/quota_source_s75_e50_c20_features_sentence_score_full_tune \
+  --cache-dir outputs/pipeline_cache \
+  --hybrid-recalls sentence_embedding entity_embedding category \
+  --hybrid-recall-quotas sentence_embedding=75 entity_embedding=50 category=20 \
+  --use-hybrid-recall-features \
+  --use-sentence-embedding-score \
+  --tune-lgbm
+```
+
+Conclusion:
+
+`s75/e50/c20` 是目前 per-source quota 最佳，也是新的 production-style best。它相比原来的 `union@50`，AUC / MRR / nDCG@5 / nDCG@10 全部提升:
+
+```text
+AUC:     0.6555 -> 0.6584 (↑)
+MRR:     0.3652 -> 0.3660 (↑)
+nDCG@5:  0.3507 -> 0.3508 (↑)
+nDCG@10: 0.4089 -> 0.4104 (↑)
+```
+这里给 SentenceEmbedding 最大 quota，是因为它在当前实验中提供了最强的 semantic matching signal；
+EntityEmbedding 作为补充实体语义召回保留中等 quota；
+Category recall 覆盖面较宽但排序区分度较弱，因此只保留较小 quota 来补充 coverage，避免引入过多低质量候选。
+
+小范围微调也尝试了 `s75/e60/c20`、`s80/e50/c20`、`s70/e50/c20`、`s75/e50/c15`，结果都不如 `s75/e50/c20`。当前不建议继续在 quota 上做过细搜索，下一步更适合研究 per-impression normalized recall features。
+
 ## 2026-05-13 - End-to-end Backend Pipeline and LambdaRank Trial
 
 本轮主要把前面分开测试的 recall filtering 和 ranking features 串成更接近工业界 two-stage recommendation system 的完整 pipeline
@@ -87,7 +150,7 @@ Full validation results：
 | union@50 + hybrid features + tuned binary LightGBM | 16.62% | 93.23% | 95.62% | 0.6439 | 0.3559 | 0.3404 | 0.3994 |
 | union@50 + hybrid features + sentence score + tuned binary LightGBM | 16.62% | 93.23% | 95.62% | **0.6555** | **0.3652** | **0.3507** | **0.4089** |
 
-相较于之前 backend filtering (3-way recall union@50) 结果的提升：
+相较于之前 backend filtering (base features) 结果的提升：
 
 ```text
 AUC:     0.6418 -> 0.6555 (↑)
@@ -132,7 +195,7 @@ Takeaway:
 1. 在相同 union@50 candidate pool 下，加入 hybrid recall features、raw sentence_embedding_score，
    并 tune binary LightGBM 后，ranking metrics 全面提升。
 
-2. raw sentence_embedding_score 提供了额外的 continuous semantic similarity signal，
+2. raw sentence_embedding_score 提供了额外的 continuous semantic similarity signal，对模型整体提升巨大。
    不只是 sentence_embedding_rank / recalled_by flag 有用。
 
 3. 这说明 recall 不仅能用于 candidate generation，

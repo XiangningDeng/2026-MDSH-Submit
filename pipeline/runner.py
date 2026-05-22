@@ -46,9 +46,20 @@ class RecommendationPipeline:
     @property
     def _hybrid_enabled(self) -> bool:
         return (
-            self.config.hybrid_recall_top_n is not None
-            and self.config.hybrid_recall_top_n > 0
+            bool(self.config.hybrid_recall_quotas)
+            or (
+                self.config.hybrid_recall_top_n is not None
+                and self.config.hybrid_recall_top_n > 0
+            )
         )
+
+    @property
+    def _hybrid_recall_top_n(self) -> int | dict[str, int]:
+        if self.config.hybrid_recall_quotas:
+            return self.config.hybrid_recall_quotas
+        if self.config.hybrid_recall_top_n is None:
+            raise ValueError("Hybrid recall is enabled but no topN value was configured.")
+        return self.config.hybrid_recall_top_n
 
     @staticmethod
     def _apply_recall_top_k(
@@ -414,13 +425,13 @@ class RecommendationPipeline:
             train_candidates, train_hybrid_stats = build_hybrid_recall_pool(
                 train_candidates,
                 train_selected_scores,
-                self.config.hybrid_recall_top_n,
+                self._hybrid_recall_top_n,
                 self.config.hybrid_include_zero_score,
             )
             valid_candidates, valid_hybrid_stats = build_hybrid_recall_pool(
                 valid_candidates,
                 valid_selected_scores,
-                self.config.hybrid_recall_top_n,
+                self._hybrid_recall_top_n,
                 self.config.hybrid_include_zero_score,
             )
             train_tfidf_scores = filter_scores_to_candidates(train_tfidf_scores, train_candidates)
@@ -575,6 +586,7 @@ class RecommendationPipeline:
                 "use_entity_embedding_score": self.config.use_entity_embedding_score,
                 "use_sentence_embedding_score": self.config.use_sentence_embedding_score,
                 "use_hybrid_recall_features": self.config.use_hybrid_recall_features,
+                "hybrid_recall_quotas": self.config.hybrid_recall_quotas,
                 "hybrid": {
                     "train": train_hybrid_stats,
                     "valid": valid_hybrid_stats,

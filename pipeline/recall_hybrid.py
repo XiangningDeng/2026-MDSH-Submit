@@ -51,11 +51,10 @@ def select_recall_top_n(
 def build_hybrid_recall_pool(
     candidates: pd.DataFrame,
     scores_by_recall: dict[str, pd.DataFrame],
-    top_n: int,
+    top_n: int | dict[str, int],
     include_zero_score: bool = False,
 ) -> tuple[pd.DataFrame, dict]:
-    if top_n <= 0:
-        raise ValueError("top_n must be positive.")
+    top_n_by_source = _resolve_top_n_by_source(scores_by_recall, top_n)
 
     candidates = candidates.copy()
     candidates["impression_id"] = candidates["impression_id"].astype(str)
@@ -68,10 +67,11 @@ def build_hybrid_recall_pool(
         if scores is None:
             continue
         score_col = RECALL_SCORE_COLUMNS[source]
-        selected = select_recall_top_n(scores, score_col, top_n, include_zero_score)
+        source_top_n = top_n_by_source[source]
+        selected = select_recall_top_n(scores, score_col, source_top_n, include_zero_score)
         selected_parts.append(selected[["impression_id", "candidate_news_id"]])
         source_stats[source] = {
-            "top_n": top_n,
+            "top_n": source_top_n,
             "candidates_after": int(len(selected)),
             "avg_candidates_per_impression": _avg_candidates_per_impression(selected),
         }
@@ -94,7 +94,8 @@ def build_hybrid_recall_pool(
     stats = {
         "enabled": True,
         "sources": list(scores_by_recall.keys()),
-        "top_n": top_n,
+        "top_n": top_n if isinstance(top_n, int) else None,
+        "top_n_by_source": top_n_by_source,
         "include_zero_score": include_zero_score,
         "candidates_before": int(before),
         "candidates_after": int(len(kept)),
@@ -104,6 +105,29 @@ def build_hybrid_recall_pool(
     }
     stats.update(_positive_recall_stats(candidates, kept))
     return kept.reset_index(drop=True), stats
+
+
+def _resolve_top_n_by_source(
+    scores_by_recall: dict[str, pd.DataFrame],
+    top_n: int | dict[str, int],
+) -> dict[str, int]:
+    sources = list(scores_by_recall.keys())
+    if isinstance(top_n, int):
+        if top_n <= 0:
+            raise ValueError("top_n must be positive.")
+        return {source: top_n for source in sources}
+
+    missing_sources = set(sources) - set(top_n)
+    if missing_sources:
+        raise ValueError(
+            f"Missing top_n quota for recall sources: {sorted(missing_sources)}"
+        )
+
+    top_n_by_source = {source: int(top_n[source]) for source in sources}
+    invalid_sources = [source for source, value in top_n_by_source.items() if value <= 0]
+    if invalid_sources:
+        raise ValueError(f"top_n quotas must be positive: {sorted(invalid_sources)}")
+    return top_n_by_source
 
 
 def filter_scores_to_candidates(

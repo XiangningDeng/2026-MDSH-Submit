@@ -5,6 +5,33 @@ import json
 from pathlib import Path
 
 
+def parse_hybrid_recall_quotas(values: list[str] | None) -> dict[str, int]:
+    if not values:
+        return {}
+
+    quotas = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError(
+                "Hybrid recall quotas must use source=N format, "
+                f"got {value!r}."
+            )
+        source, quota_text = value.split("=", 1)
+        source = source.strip()
+        if not source:
+            raise ValueError(f"Hybrid recall quota source is empty in {value!r}.")
+        try:
+            quota = int(quota_text)
+        except ValueError as exc:
+            raise ValueError(
+                f"Hybrid recall quota for {source!r} must be an integer."
+            ) from exc
+        if quota <= 0:
+            raise ValueError(f"Hybrid recall quota for {source!r} must be positive.")
+        quotas[source] = quota
+    return quotas
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run recall features + LightGBM ranking pipeline.")
     parser.add_argument("--mode", choices=["eval", "inference"], default="eval")
@@ -38,6 +65,16 @@ def main() -> None:
         ],
         default=["tfidf", "entity_embedding", "category"],
         help="Recall sources to union when --hybrid-recall-top-n is set.",
+    )
+    parser.add_argument(
+        "--hybrid-recall-quotas",
+        nargs="+",
+        default=None,
+        metavar="SOURCE=N",
+        help=(
+            "Optional per-source recall quotas, for example "
+            "sentence_embedding=75 entity_embedding=35 category=20."
+        ),
     )
     parser.add_argument(
         "--hybrid-include-zero-score",
@@ -108,6 +145,10 @@ def main() -> None:
         help="LightGBM training objective: binary classifier baseline or LambdaRank ranker.",
     )
     args = parser.parse_args()
+    try:
+        hybrid_recall_quotas = parse_hybrid_recall_quotas(args.hybrid_recall_quotas)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     from pipeline.config import PipelineConfig
     from pipeline.runner import RecommendationPipeline
@@ -120,6 +161,7 @@ def main() -> None:
         recall_top_k=args.recall_top_k,
         hybrid_recall_top_n=args.hybrid_recall_top_n,
         hybrid_recall_sources=args.hybrid_recalls,
+        hybrid_recall_quotas=hybrid_recall_quotas,
         hybrid_include_zero_score=args.hybrid_include_zero_score,
         use_tfidf_score=args.use_tfidf_score,
         use_bm25_score=args.use_bm25_score,

@@ -193,6 +193,7 @@ class PipelineConfig:
     hybrid_recall_sources: list[str] = field(
         default_factory=lambda: ["tfidf", "entity_embedding", "category"]
     )
+    hybrid_recall_quotas: dict[str, int] = field(default_factory=dict)
     hybrid_include_zero_score: bool = False
     ranker: str = "binary"
     seed: int = SEED
@@ -256,6 +257,35 @@ class PipelineConfig:
         unknown_sources = set(self.hybrid_recall_sources) - set(RECALL_SOURCES)
         if unknown_sources:
             raise ValueError(f"Unknown hybrid recall sources: {sorted(unknown_sources)}")
+
+        unknown_quota_sources = set(self.hybrid_recall_quotas) - set(RECALL_SOURCES)
+        if unknown_quota_sources:
+            raise ValueError(
+                f"Unknown hybrid recall quota sources: {sorted(unknown_quota_sources)}"
+            )
+        invalid_quota_sources = [
+            source for source, quota in self.hybrid_recall_quotas.items() if quota <= 0
+        ]
+        if invalid_quota_sources:
+            raise ValueError(
+                f"Hybrid recall quotas must be positive: {sorted(invalid_quota_sources)}"
+            )
+        unused_quota_sources = set(self.hybrid_recall_quotas) - set(
+            self.hybrid_recall_sources
+        )
+        if unused_quota_sources:
+            raise ValueError(
+                "Hybrid recall quotas include sources not selected by --hybrid-recalls: "
+                f"{sorted(unused_quota_sources)}"
+            )
+        missing_quota_sources = set(self.hybrid_recall_sources) - set(
+            self.hybrid_recall_quotas
+        )
+        if self.hybrid_recall_quotas and missing_quota_sources:
+            raise ValueError(
+                "Missing hybrid recall quotas for selected sources: "
+                f"{sorted(missing_quota_sources)}"
+            )
 
         if not self.use_tfidf_score:
             self.feature_columns = [
